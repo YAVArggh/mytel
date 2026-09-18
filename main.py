@@ -1,14 +1,14 @@
 """
 ═══════════════════════════════════════════════════════════════════════
-🤖 ربات پیام ناشناس — Anonymous Messenger Bot (v5.0 — Ultimate)
+🤖 ربات پیام ناشناس — Anonymous Messenger Bot (v7.0)
 ═══════════════════════════════════════════════════════════════════════
-✨ قابلیت‌های جدید:
-   ✅ ساخت پروفایل کامل (جنسیت، سن، استان، شهر، آواتار PNG)
-   ✅ اتصال به مخاطب خاص (با ID یا Forward)
-   ✅ اتصال به یک ناشناس با فیلتر سن/جنسیت/همشهری
-   ✅ تنظیمات کاربر (حالت وب، سایلنت، کپی‌رایت، اعلان مشاهده)
-   ✅ نمایش ساعت/روز/تاریخ در فوتر همه پنل‌ها
-   ✅ لینک دائمی + یکبارمصرف
+✨ ویژگی‌های v7.0:
+   ✅ آواتار لبخندزن و خوشگل (پسر/دختر مجزا)
+   ✅ انتخاب سن دقیق 9-99 با گرید 5×5 صفحه‌بندی‌شده
+   ✅ ویرایش عکس پروفایل (آپلود سفارشی + تصادفی)
+   ✅ قوانین دقیق 7 بند
+   ✅ لیست کامل ۳۱ استان ایران
+   ✅ پشتیبانی چندزبانه (فارسی، English، العربية)
 ═══════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
@@ -17,16 +17,16 @@ import asyncio
 import hashlib
 import logging
 import os
+import random
 import re
 import secrets
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
-from typing import Any, Optional
+from typing import Optional
 
 import aiosqlite
-import jdatetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
@@ -62,8 +62,8 @@ except ImportError:
 class Config:
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "8654406992:AAECfMfmYjc9_W8sFG-yNR78kASBh7CRMTs")
     ADMIN_ID: int = int(os.getenv("ADMIN_ID", "8094551428"))
-    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "@irPachPAchBot")
-    DB_PATH: str = os.getenv("DB_PATH", "anonymous_bot_v5.db")
+    BOT_USERNAME: str = os.getenv("BOT_USERNAME", "YourBot")
+    DB_PATH: str = os.getenv("DB_PATH", "anonymous_bot_v7.db")
     RATE_LIMIT_MESSAGES: int = 15
     RATE_LIMIT_WINDOW: int = 60
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -83,7 +83,7 @@ class Config:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۲ — لاگ
+# 📌 بخش ۲ — لاگ‌گیری
 # ═══════════════════════════════════════════════════════════════════════
 
 def setup_logger() -> logging.Logger:
@@ -107,7 +107,7 @@ if not STYLE_SUPPORTED:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۳ — ابزارها (تاریخ شمسی، داده‌های ایران، توکن)
+# 📌 بخش ۳ — تاریخ شمسی
 # ═══════════════════════════════════════════════════════════════════════
 
 WEEKDAYS_FA = ["شنبه", "یک‌شنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"]
@@ -115,25 +115,46 @@ MONTHS_FA = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مر
              "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
 
 
+def gregorian_to_jalali(gy: int, gm: int, gd: int) -> tuple[int, int, int]:
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy + 1 if gm > 2 else gy
+    days = (355666 + (365 * gy) + ((gy2 + 3) // 4) - ((gy2 + 99) // 100)
+            + ((gy2 + 399) // 400) + gd + g_d_m[gm - 1])
+    jy = -1595 + (33 * (days // 12053))
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        jm = 1 + (days // 31)
+        jd = 1 + (days % 31)
+    else:
+        jm = 7 + ((days - 186) // 30)
+        jd = 1 + ((days - 186) % 30)
+    return jy, jm, jd
+
+
+def now_shamsi():
+    now = datetime.now()
+    jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+    py_wd = now.weekday()
+    fa_wd = (py_wd + 2) % 7
+    return jy, jm, jd, now.hour, now.minute, fa_wd
+
+
 def fa_now_str() -> str:
-    """متن کوتاه تاریخ و ساعت شمسی برای فوتر."""
-    now = jdatetime.datetime.now()
-    weekday = WEEKDAYS_FA[now.weekday()]
-    month = MONTHS_FA[now.month - 1]
-    return f"🕐 {now.strftime('%H:%M')}  |  📅 {weekday} {now.day} {month} {now.year}"
+    jy, jm, jd, hh, mm, wd = now_shamsi()
+    return f"🕐 {hh:02d}:{mm:02d}  |  📅 {WEEKDAYS_FA[wd]} {jd} {MONTHS_FA[jm - 1]} {jy}"
 
 
 def with_footer(text: str) -> str:
-    """افزودن فوتر تاریخ/ساعت به انتهای متن هر پنل."""
     return f"{text}\n\n━━━━━━━━━━━━━━━━━━\n{fa_now_str()}"
 
 
 def generate_secure_token(length: int = 16) -> str:
     return secrets.token_urlsafe(length)
-
-
-def token_fingerprint(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()[:8]
 
 
 def sanitize_text(text: str) -> str:
@@ -156,62 +177,269 @@ def parse_channel_input(raw: str) -> Optional[str]:
     return None
 
 
-# ─── داده‌های استان‌ها و شهرهای ایران ───
+# ═══════════════════════════════════════════════════════════════════════
+# 📌 بخش ۴ — آواتار خوشگل و لبخندزن 🎨✨
+# ═══════════════════════════════════════════════════════════════════════
+
+def avatar_url(gender: str, seed: int | str, size: int = 512) -> str:
+    """
+    ساخت آواتار PNG خوشگل و لبخندزن از DiceBear Avataaars v9.
+    - پسر: موی کوتاه مرتب، بدون ریش، لباس آبی/تیره، لبخند دلنشین
+    - دختر: موی بلند/بافته، لباس صورتی/رنگی، لباس رنگی، لبخند دلنشین
+    - چشم‌های شاد و ابروهای طبیعی برای بیان گرم
+    """
+    base = f"https://api.dicebear.com/9.x/avataaars/png?seed={seed}"
+
+    # مشترک بین هر دو: لبخند + چشم‌های شاد
+    common = (
+        "&mouth=smile,twinkle"
+        "&eyes=happy,default,squint"
+        "&eyebrow=default,defaultNatural,raisedExcited,raisedExcitedNatural,upDown"
+        "&nose=default"
+        "&facialHairProbability=0"
+        "&skinColor=edb98a,d08b5b,ae5d29,614335,ffdbb4"
+        "&style=circle"
+        f"&size={size}"
+    )
+
+    if gender == "male":
+        return (
+            f"{base}"
+            f"{common}"
+            "&top=shortFlat,shortRound,shortWaved,shortCurly,shortDreads,theCaesar,shortShaggy,sides,shaggyMullet"
+            "&hairColor=2c1b18,4a312c,724133,a55728,b58143,d6b370"
+            "&clothing=blazerAndShirt,blazerAndSweater,graphicShirt,hoodie,shirtCrewNeck,shirtVNeck,overall"
+            "&clothingColor=262e33,3c4f5c,65c9ff,5199e4,25557c,929598,262e33"
+            "&accessories=prescription01,prescription02,round,wayfarers"
+            "&accessoriesColor=262e33,3c4f5c,25557c"
+            "&accessoriesProbability=18"
+            "&hairColor=2c1b18,4a312c,724133,a55728,b58143,d6b370"
+            "&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf"
+        )
+    elif gender == "female":
+        return (
+            f"{base}"
+            f"{common}"
+            "&top=bigHair,bob,bun,curly,curvy,frida,fro,froBand,longButNotTooLong,miaWallace,straight01,straight02,straightAndStrand"
+            "&hairColor=2c1b18,4a312c,724133,a55728,b58143,d6b370,ff5c5c,ff9c9c,ffd5dc,724133"
+            "&clothing=blazerAndShirt,collarAndSweater,graphicShirt,hoodie,shirtCrewNeck,shirtScoopNeck,shirtVNeck"
+            "&clothingColor=ff5c5c,ff9c9c,ffb0b0,ffd5dc,c0aede,d1d4f9,b6e3f4"
+            "&accessories=prescription01,prescription02,round"
+            "&accessoriesColor=262e33,3c4f5c,25557c,ff5c5c"
+            "&accessoriesProbability=22"
+            "&backgroundColor=ffd5dc,ffdfbf,c0aede,d1d4f9,b6e3f4"
+        )
+    else:
+        return (
+            f"{base}"
+            f"{common}"
+            "&top=shortFlat,shortRound,bob,curly,fro"
+            "&clothing=graphicShirt,hoodie,shirtCrewNeck"
+            "&clothingColor=d1d4f9,b6e3f4,c0aede"
+            "&accessoriesProbability=10"
+            "&backgroundColor=d1d4f9,b6e3f4,c0aede"
+        )
+
+
+def is_custom_avatar(avatar: str) -> bool:
+    """بررسی اینکه آواتار آپلود سفارشی است یا لینک تولیدی."""
+    return bool(avatar) and avatar.startswith("file:")
+
+
+def extract_file_id(avatar: str) -> str:
+    """استخراج file_id از آواتار سفارشی."""
+    return avatar[5:] if is_custom_avatar(avatar) else avatar
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 📌 بخش ۵ — لیست کامل استان‌ها و شهرها
+# ═══════════════════════════════════════════════════════════════════════
+
 IRAN_DATA: dict[str, list[str]] = {
-    "آذربایجان شرقی": ["تبریز", "مراغه", "مرند", "اهر", "میانه", "بناب", "سراب", "جلفا"],
-    "آذربایجان غربی": ["ارومیه", "خوی", "میاندوآب", "مهاباد", "بوکان", "سلماس", "پیرانشهر"],
-    "اردبیل": ["اردبیل", "پارس‌آباد", "مشگین‌شهر", "خلخال", "گرمی", "بیله‌سوار"],
-    "اصفهان": ["اصفهان", "کاشان", "خمینی‌شهر", "نجف‌آباد", "شهرضا", "شاهین‌شهر", "فولادشهر"],
-    "البرز": ["کرج", "فردیس", "هشتگرد", "نظرآباد", "محمدشهر", "ماهدشت"],
-    "ایلام": ["ایلام", "دهلران", "آبدانان", "مهران", "دره‌شهر", "ایوان"],
-    "بوشهر": ["بوشهر", "برازجان", "بندر گناوه", "بندر دیر", "کنگان", "جم", "عسلویه"],
-    "تهران": ["تهران", "شهریار", "اسلامشهر", "قدس", "ملارد", "پاکدشت", "ورامین", "پردیس", "رباط‌کریم", "فیروزکوه"],
-    "چهارمحال و بختیاری": ["شهرکرد", "بروجن", "فارسان", "لردگان", "سامان", "بن"],
-    "خراسان جنوبی": ["بیرجند", "قائن", "فردوس", "نهبندان", "طبس مسینا", "سربیشه"],
-    "خراسان رضوی": ["مشهد", "نیشابور", "سبزوار", "تربت حیدریه", "قوچان", "کاشمر", "گناباد", "تربت جام"],
-    "خراسان شمالی": ["بجنورد", "شیروان", "اسفراین", "آشخانه", "گرمه", "جاجرم"],
-    "خوزستان": ["اهواز", "آبادان", "خرمشهر", "دزفول", "اندیمشک", "بهبهان", "ماهشهر", "شوشتر", "ایذه"],
-    "زنجان": ["زنجان", "ابهر", "خرمدره", "قیدار", "صائین‌قلعه", "ماه‌نشان"],
-    "سمنان": ["سمنان", "شاهرود", "دامغان", "گرمسار", "مهدی‌شهر", "میامی"],
-    "سیستان و بلوچستان": ["زاهدان", "زابل", "چابهار", "ایرانشهر", "سراوان", "خاش", "میرجاوه"],
-    "فارس": ["شیراز", "مرودشت", "کازرون", "جهرم", "فسا", "داراب", "لار", "آباده", "نی‌ریز"],
-    "قزوین": ["قزوین", "الوند", "تاکستان", "آبیک", "بوئین‌زهرا", "محمدیه"],
-    "قم": ["قم", "قنوات", "جعفریه", "دستجرد", "سلفچگان"],
-    "کردستان": ["سنندج", "سقز", "مریوان", "بانه", "قروه", "بیجار", "کامیاران"],
-    "کرمان": ["کرمان", "رفسنجان", "سیرجان", "جیرفت", "بم", "زرند", "کهنوج", "بردسیر"],
-    "کرمانشاه": ["کرمانشاه", "اسلام‌آباد غرب", "هرسین", "کنگاور", "سنقر", "پاوه", "جوانرود"],
-    "کهگیلویه و بویراحمد": ["یاسوج", "دوگنبدان", "دهدشت", "سی‌سخت", "لیکک", "چرام"],
-    "گلستان": ["گرگان", "گنبد کاووس", "علی‌آباد کتول", "بندر ترکمن", "آق‌قلا", "کردکوی", "مینودشت"],
-    "گیلان": ["رشت", "انزلی", "لاهیجان", "لنگرود", "آستارا", "تالش", "رودسر", "فومن", "صومعه‌سرا"],
-    "لرستان": ["خرم‌آباد", "بروجرد", "دورود", "الیگودرز", "کوهدشت", "نورآباد", "ازنا"],
-    "مازندران": ["ساری", "بابل", "آمل", "قائم‌شهر", "بهشهر", "چالوس", "نوشهر", "تنکابن", "رامسر", "نکا"],
-    "مرکزی": ["اراک", "ساوه", "خمین", "محلات", "دلیجان", "تفرش", "شازند"],
-    "هرمزگان": ["بندرعباس", "میناب", "بندر لنگه", "قشم", "کیش", "بندر خمیر", "حاجی‌آباد"],
-    "همدان": ["همدان", "ملایر", "نهاوند", "تویسرکان", "اسدآباد", "بهار", "کبودراهنگ"],
-    "یزد": ["یزد", "میبد", "اردکان", "بافق", "مهریز", "ابرکوه", "تفت"],
+    "آذربایجان شرقی": ["تبریز","مراغه","مرند","اهر","میانه","بناب","سراب","جلفا","آذرشهر","اسکو","شبستر","هریس","بستان‌آباد","هشترود","ملکان","عجب‌شیر","خداآفرین","ورزقان","کلیبر","هوراند"],
+    "آذربایجان غربی": ["ارومیه","خوی","میاندوآب","مهاباد","بوکان","سلماس","پیرانشهر","نقده","اشنویه","شاهین‌دژ","ماکو","چالدران","پلدشت","شوط","تکاب","سردشت","کشاورز","مرگنلر","محمودآباد","نازک‌علیا"],
+    "اردبیل": ["اردبیل","پارس‌آباد","مشگین‌شهر","خلخال","گرمی","بیله‌سوار","نمین","نیر","سرعین","کوثر","هیر","لاهرود","قصابه","رضی","فخرآباد","جعفرآباد","کیوی","عنبران","ابی‌بیگلو","اصلاندوز"],
+    "اصفهان": ["اصفهان","کاشان","خمینی‌شهر","نجف‌آباد","شهرضا","شاهین‌شهر","فولادشهر","زرین‌شهر","آران و بیدگل","اردستان","نائین","سمیرم","فریدن","فریدون‌شهر","چادگان","بوئین و میاندشت","خوانسار","گلپایگان","دهاقان","برخوار","مبارکه","دلیجان","نطنز","قهرود","قمصر","نوش‌آباد","کوهپایه","هرند","ورزنه","زیار"],
+    "البرز": ["کرج","فردیس","هشتگرد","نظرآباد","محمدشهر","ماهدشت","مشکین‌دشت","چهارباغ","اشتهارد","گرمدره","گلسار","کوهسار","طالقان","آسارا","تنکمان","کمال‌شهر"],
+    "ایلام": ["ایلام","دهلران","آبدانان","مهران","دره‌شهر","ایوان","چرداول","ملکشاهی","بدره","سیروان","هلیلان","ارکواز","موسیان","دلگشا","ماژین","پهله","زرین‌آباد","لومار"],
+    "بوشهر": ["بوشهر","برازجان","بندر گناوه","بندر دیر","کنگان","جم","عسلویه","خورموج","اهرم","دیلم","بندر ریگ","شنبه","کاکی","بردخون","دلوار","آبدان","ریز","سعدآباد","چغادک"],
+    "تهران": ["تهران","شهریار","اسلامشهر","قدس","ملارد","پاکدشت","ورامین","پردیس","رباط‌کریم","فیروزکوه","دماوند","شمشک","لواسان","بومهن","رودهن","آبعلی","چهاردانگه","نسیم‌شهر","صباشهر","وحیدیه","باقرشهر","کهریزک","حسن‌آباد","جوادآباد","قرچک","پیشوا","شریف‌آباد","جاجرود","فشم","میگون"],
+    "چهارمحال و بختیاری": ["شهرکرد","بروجن","فارسان","لردگان","سامان","بن","سفیددشت","هفشجان","کیار","اردل","دزپارت","فلارد","خانمیرزا","گندمان","بلداجی","نقنه","دستنا","وردنجان"],
+    "خراسان جنوبی": ["بیرجند","قائن","فردوس","نهبندان","سربیشه","طبس","بشرویه","خوسف","درمیان","زیرکوه","سرایان","آیسک","اسدیه","حاجی‌آباد","مود","سده","خضری","نیمبلوک"],
+    "خراسان رضوی": ["مشهد","نیشابور","سبزوار","تربت حیدریه","قوچان","کاشمر","گناباد","تربت جام","چناران","خواف","تایباد","بردسکن","درگز","سرخس","فریمان","جغتای","جوین","خلیل‌آباد","رشتخوار","زاوه","باخرز","بجستان","فیروزه","مه‌ولات","کوهسرخ","داورزن","صالح‌آباد","طرقبه","شاندیز","گلمکان"],
+    "خراسان شمالی": ["بجنورد","شیروان","اسفراین","آشخانه","گرمه","جاجرم","فاروج","راز","صفی‌آباد","سنخواست","قاضی","چناران","لوجلی","حصارگرمخان","تیتکانلو","درق","زیارت"],
+    "خوزستان": ["اهواز","آبادان","خرمشهر","دزفول","اندیمشک","بهبهان","ماهشهر","شوشتر","ایذه","شوش","مسجد سلیمان","رامهرمز","باغ‌ملک","امیدیه","هندیجان","لالی","هفتکل","آغاجاری","رامشیر","حمیدیه","دشت آزادگان","کارون","باوی","گتوند","کرخه","شادگان","هویزه","بستان","سوسنگرد","رفیع"],
+    "زنجان": ["زنجان","ابهر","خرمدره","قیدار","صائین‌قلعه","ماه‌نشان","هیدج","صومعه","سجاس","چورزق","گرماب","ارمغانخانه","زری‌آباد","نوربهار","خدابنده"],
+    "سمنان": ["سمنان","شاهرود","دامغان","گرمسار","مهدی‌شهر","میامی","بسطام","مجن","بیارجمند","رودیان","امیریه","ایوانکی","آرادان","کهن‌آباد","شهمیرزاد","درجزین"],
+    "سیستان و بلوچستان": ["زاهدان","زابل","چابهار","ایرانشهر","سراوان","خاش","میرجاوه","نیک‌شهر","کنارک","زهک","هیرمند","قصرقند","سرباز","راسک","مهرستان","سیب و سوران","فنوج","بمپور","جالق","پیشین","بن‌جار","نصرت‌آباد","بزمان","محمدآباد"],
+    "فارس": ["شیراز","مرودشت","کازرون","جهرم","فسا","داراب","لار","آباده","نی‌ریز","اقلید","سپیدان","استهبان","زرین‌دشت","خرامه","سروستان","کوار","فیروزآباد","قیر و کارزین","مهر","لامرد","خنج","گراش","اوز","جویم","بنارویه","بیرم","بالاده","کامفیروز","رونیز","ایج"],
+    "قزوین": ["قزوین","الوند","تاکستان","آبیک","بوئین‌زهرا","محمدیه","آوج","شال","اسفرورین","ضیاءآباد","خرمدشت","نرجه","معلم‌کلایه","رازمیان","کوهین","بیدستان","شریفیه"],
+    "قم": ["قم","قنوات","جعفریه","دستجرد","سلفچگان","کهک","خلجستان","راهجرد","ورجان","قاهان","فردو"],
+    "کردستان": ["سنندج","سقز","مریوان","بانه","قروه","بیجار","کامیاران","دیواندره","دهگلان","سروآباد","چناره","شویشه","مالوجه","زرینه","دلبران","بابارشانی"],
+    "کرمان": ["کرمان","رفسنجان","سیرجان","جیرفت","بم","زرند","کهنوج","بردسیر","شهربابک","انار","ریگان","فهرج","منوجان","رودبار جنوب","قلعه‌گنج","عنبرآباد","فاریاب","ارزوئیه","راور","کوهبنان","رابر","بافت","نرماشیر","گلباف","شهداد","ماهان","چترود","نجف‌شهر","خواجو"],
+    "کرمانشاه": ["کرمانشاه","اسلام‌آباد غرب","هرسین","کنگاور","سنقر","پاوه","جوانرود","صحنه","قصر شیرین","گیلانغرب","سرپل ذهاب","روانسر","دالاهو","ثلاث باباجانی","باینگان","نوسود","ازگله","کرند غرب","رباط","بیستون","ماهیدشت"],
+    "کهگیلویه و بویراحمد": ["یاسوج","دوگنبدان","دهدشت","سی‌سخت","لیکک","چرام","باشت","مارگون","دنا","لنده","سوق","قلعه رئیسی","پاتاوه","سرفاریاب"],
+    "گلستان": ["گرگان","گنبد کاووس","علی‌آباد کتول","بندر ترکمن","آق‌قلا","کردکوی","مینودشت","آزادشهر","رامیان","مراوه‌تپه","گمیشان","بندر گز","نوکنده","خالدنبی","اینچه‌برون","دلند","فاضل‌آباد","سیمین‌شهر","نگین‌شهر"],
+    "گیلان": ["رشت","انزلی","لاهیجان","لنگرود","آستارا","تالش","رودسر","فومن","صومعه‌سرا","رودبار","آستانه اشرفیه","املش","رضوانشهر","ماسال","شفت","سیاهکل","خمام","منجیل","لوشان","بره‌سر","کومله","چابکسر","واجارگاه"],
+    "لرستان": ["خرم‌آباد","بروجرد","دورود","الیگودرز","کوهدشت","نورآباد","ازنا","پل‌دختر","چگنی","رومشکان","سلسله","دلفان","معمولان","بی‌بی‌سید","اشترینان"],
+    "مازندران": ["ساری","بابل","آمل","قائم‌شهر","بهشهر","چالوس","نوشهر","تنکابن","رامسر","نکا","جویبار","فریدونکنار","محمودآباد","نور","عباس‌آباد","گلوگاه","کلاردشت","پل سفید","سوادکوه","زیراب","شیرگاه","بلده","کجور"],
+    "مرکزی": ["اراک","ساوه","خمین","محلات","دلیجان","تفرش","شازند","زرندیه","کمیجان","آشتیان","فرمهین","خنداب","مأمونیه","غرق‌آباد","پرندک","نراق","جاسب"],
+    "هرمزگان": ["بندرعباس","میناب","بندر لنگه","قشم","کیش","بندر خمیر","حاجی‌آباد","رودان","بستک","پارسیان","جاسک","سیریک","ابوموسی","بندر جاسک","گاوبندی","کوهستک","هشتبندی"],
+    "همدان": ["همدان","ملایر","نهاوند","تویسرکان","اسدآباد","بهار","کبودراهنگ","رزن","فامنین","لالجین","مریانج","جورقان","قهاوند","دمق","سامن","برزول","فیروزان","گل‌تپه"],
+    "یزد": ["یزد","میبد","اردکان","بافق","مهریز","ابرکوه","تفت","اشکذر","خاتم","بهاباد","مروست","هرات","زارچ","شاهدیه","حمیدیا","ندوشن","نیر","عقدا"],
 }
 
 PROVINCES = list(IRAN_DATA.keys())
 
-
-# ─── ساخت آواتار PNG از سرویس DiceBear ───
-def avatar_url(gender: str, seed: int) -> str:
-    """لینک PNG آواتار بر اساس جنسیت."""
-    style = "avataaars"
-    if gender == "male":
-        s = f"male-{seed}"
-        bg = "b6e3f4"
-    elif gender == "female":
-        s = f"female-{seed}"
-        bg = "ffdfbf"
-    else:
-        s = f"anon-{seed}"
-        bg = "d1d4f9"
-    return f"https://api.dicebear.com/7.x/{style}/png?seed={s}&backgroundColor={bg}&size=512"
+ALL_AGES = list(range(9, 100))  # 9 تا 99
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۴ — دیتابیس
+# 📌 بخش ۶ — چندزبانه
+# ═══════════════════════════════════════════════════════════════════════
+
+TRANSLATIONS: dict[str, dict[str, str]] = {
+    "fa": {
+        "welcome_title": "🌟 <b>به ربات پیام ناشناس خوش آمدی!</b>",
+        "welcome_sub": "✨ دنیای ناشناس، شفاف و امن",
+        "rules_title": "📜 <b>قوانین استفاده از ربات:</b>",
+        "accept_rules": "✅ قوانین را می‌پذیرم",
+        "decline_rules": "❌ انصراف",
+        "main_menu": "🏠 <b>منوی اصلی</b>",
+    },
+    "en": {
+        "welcome_title": "🌟 <b>Welcome to Anonymous Messenger!</b>",
+        "welcome_sub": "✨ Anonymous world, transparent and secure",
+        "rules_title": "📜 <b>Bot Rules:</b>",
+        "accept_rules": "✅ I accept the rules",
+        "decline_rules": "❌ Decline",
+        "main_menu": "🏠 <b>Main Menu</b>",
+    },
+    "ar": {
+        "welcome_title": "🌟 <b>مرحباً بك في الرسائل المجهولة!</b>",
+        "welcome_sub": "✨ عالم مجهول، شفاف وآمن",
+        "rules_title": "📜 <b>قواعد البوت:</b>",
+        "accept_rules": "✅ أوافق على القواعد",
+        "decline_rules": "❌ رفض",
+        "main_menu": "🏠 <b>القائمة الرئيسية</b>",
+    },
+}
+
+
+def t(key: str, lang: str = "fa") -> str:
+    return TRANSLATIONS.get(lang, TRANSLATIONS["fa"]).get(key, TRANSLATIONS["fa"].get(key, key))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 📌 بخش ۷ — قوانین کامل و دقیق 📜
+# ═══════════════════════════════════════════════════════════════════════
+
+RULES_FA = """📜 <b>قوانین و شرایط استفاده از ربات</b>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>1️⃣ رفتار محترمانه و اخلاقی</b>
+• با تمام کاربران با احترام و ادب رفتار کنید.
+• هرگونه توهین، فحاشی، تهمت، تمسخر و تحقیر ممنوع است.
+• از ایجاد تنش، تفرقه و بحث‌های سیاسی/مذهبی جنجالی خودداری کنید.
+
+<b>2️⃣ محتوای مجاز و ممنوع</b>
+• ارسال محتوای مستهجن، خشونت‌آمیز، غیرقانونی، تروریستی و نفرت‌پراکنانه ممنوع است.
+• تبلیغات تجاری، لینک‌های خارجی و اسپم بدون اجازه ممنوع است.
+• ارسال تصاویر و ویدیوهای نامناسب باعث بن دائمی می‌شود.
+
+<b>3️⃣ حفظ حریم خصوصی</b>
+• هویت فرستنده پیام‌های ناشناس نزد ربات محفوظ می‌ماند.
+• انتشار اطلاعات شخصی دیگران (شماره، آدرس، عکس) بدون رضایت ممنوع و پیگرد قانونی دارد.
+• ارسال تهدید، اخاذی، باج‌گیری و آزار جنسی جرم است و گزارش می‌شود.
+
+<b>4️⃣ آزار و اذیت و سوءاستفاده</b>
+• آزار، اذیت، تهدید و آزار جنسی باعث <b>بن دائمی</b> می‌شود.
+• سوءاستفاده از ربات برای کلاهبرداری، فیشینگ و جرایم سایبری ممنوع است.
+
+<b>5️⃣ مسئولیت کاربران</b>
+• مسئولیت تمام محتوای ارسالی بر عهده کاربر است.
+• ربات هیچ‌گونه مسئولیتی در قبال محتوای تولیدشده توسط کاربران ندارد.
+• در صورت تخلف، اطلاعات کاربر ممکن است در اختیار مراجع قانونی قرار گیرد.
+
+<b>6️⃣ شرایط سنی</b>
+• استفاده از ربات برای افراد <b>زیر ۱۳ سال</b> ممنوع است.
+• کاربران زیر ۱۸ سال باید با نظارت والدین استفاده کنند.
+
+<b>7️⃣ گزارش تخلف و پشتیبانی</b>
+• برای گزارش تخلف با ادمین در تماس باشید.
+• ادمین حق حذف هر پیام و بن هر کاربر متخلف را دارد.
+
+<b>8️⃣ تغییر قوانین</b>
+• این قوانین ممکن است بدون اطلاع قبلی به‌روزرسانی شوند.
+• ادامه استفاده از ربات به معنای پذیرش قوانین جدید است.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ <b>با زدن دکمه «✅ قوانین را می‌پذیرم»، تأیید می‌کنید که:</b>
+✔️ تمام قوانین بالا را خوانده و پذیرفته‌اید
+✔️ مسئولیت کامل رفتار خود را می‌پذیرید
+✔️ در صورت تخلف، ربات حق بن کردن شما را دارد
+"""
+
+RULES_EN = """📜 <b>Bot Rules & Terms of Use</b>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>1️⃣ Respectful Behavior</b>
+• Treat all users with respect.
+• Insults, profanity, defamation, and mockery are prohibited.
+
+<b>2️⃣ Content Rules</b>
+• Obscene, violent, illegal, and hateful content is prohibited.
+• Unauthorized advertising and spam are prohibited.
+
+<b>3️⃣ Privacy</b>
+• Sender identity of anonymous messages is protected.
+• Sharing others' personal info without consent is prohibited.
+
+<b>4️⃣ Harassment</b>
+• Harassment, threats, and extortion result in permanent ban.
+
+<b>5️⃣ User Responsibility</b>
+• You are responsible for your content.
+
+<b>6️⃣ Age Restriction</b>
+• Users under 13 are not allowed.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ By tapping "I accept", you agree to all rules.
+"""
+
+RULES_AR = """📜 <b>قواعد وشروط الاستخدام</b>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<b>1️⃣ السلوك المحترم</b>
+• تعامل مع جميع المستخدمين باحترام.
+
+<b>2️⃣ المحتوى</b>
+• المحتوى الفاحش والعنيف وغير القانوني محظور.
+
+<b>3️⃣ الخصوصية</b>
+• هوية المرسل محمية.
+
+<b>4️⃣ التحرش</b>
+• التحرش والتهديد يؤدي إلى حظر دائم.
+
+<b>5️⃣ المسؤولية</b>
+• أنت مسؤول عن محتواك.
+
+<b>6️⃣ العمر</b>
+• المستخدمون تحت 13 سنة غير مسموح لهم.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ بالنقر على "أوافق" فإنك تقبل جميع القواعد.
+"""
+
+
+def get_rules(lang: str) -> str:
+    return {"fa": RULES_FA, "en": RULES_EN, "ar": RULES_AR}.get(lang, RULES_FA)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 📌 بخش ۸ — دیتابیس
 # ═══════════════════════════════════════════════════════════════════════
 
 SCHEMA_SQL = """
@@ -219,6 +447,8 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     full_name TEXT,
     username TEXT,
+    language TEXT DEFAULT 'fa',
+    rules_accepted INTEGER DEFAULT 0,
     is_banned INTEGER DEFAULT 0,
     ban_reason TEXT,
     message_count INTEGER DEFAULT 0,
@@ -277,8 +507,7 @@ CREATE TABLE IF NOT EXISTS target_chats (
     creator_id INTEGER NOT NULL,
     target_id INTEGER NOT NULL,
     active INTEGER DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(creator_id) REFERENCES users(user_id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS pairings (
@@ -332,7 +561,7 @@ class Database:
             await self._conn.execute("PRAGMA journal_mode = WAL;")
             await self._conn.executescript(SCHEMA_SQL)
             await self._conn.commit()
-            log.info("✅ دیتابیس متصل: %s", Config.DB_PATH)
+            log.info("✅ دیتابیس: %s", Config.DB_PATH)
 
     async def close(self):
         async with self._get_lock():
@@ -371,7 +600,7 @@ db = Database()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۵ — مدل‌ها
+# 📌 بخش ۹ — مدل‌ها
 # ═══════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -379,6 +608,8 @@ class User:
     user_id: int
     full_name: Optional[str]
     username: Optional[str]
+    language: str
+    rules_accepted: int
     is_banned: int
     ban_reason: Optional[str]
     message_count: int
@@ -432,7 +663,7 @@ class AnonymousLink:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۶ — ریپازیتوری‌ها
+# 📌 بخش ۱۰ — ریپازیتوری‌ها
 # ═══════════════════════════════════════════════════════════════════════
 
 class UserRepo:
@@ -440,14 +671,20 @@ class UserRepo:
         await db.execute("INSERT OR IGNORE INTO users (user_id, full_name, username) VALUES (?,?,?)", (uid, fn, un))
 
     async def get(self, uid) -> Optional[User]:
-        r = await db.fetch_one("SELECT * FROM users WHERE user_id = ?", (uid,))
+        r = await db.fetch_one("SELECT * FROM users WHERE user_id=?", (uid,))
         return User.from_row(r) if r else None
 
     async def exists(self, uid) -> bool:
-        return (await db.fetch_one("SELECT 1 FROM users WHERE user_id = ?", (uid,))) is not None
+        return (await db.fetch_one("SELECT 1 FROM users WHERE user_id=?", (uid,))) is not None
 
     async def update_profile(self, uid, fn, un):
         await db.execute("UPDATE users SET full_name=?, username=?, last_seen=CURRENT_TIMESTAMP WHERE user_id=?", (fn, un, uid))
+
+    async def set_language(self, uid, lang):
+        await db.execute("UPDATE users SET language=? WHERE user_id=?", (lang, uid))
+
+    async def set_rules_accepted(self, uid):
+        await db.execute("UPDATE users SET rules_accepted=1 WHERE user_id=?", (uid,))
 
     async def ban(self, uid, reason):
         await db.execute("UPDATE users SET is_banned=1, ban_reason=? WHERE user_id=?", (reason, uid))
@@ -461,17 +698,19 @@ class UserRepo:
     async def inc_link(self, uid):
         await db.execute("UPDATE users SET link_count=link_count+1 WHERE user_id=?", (uid,))
 
-    async def get_all(self, limit=10, offset=0) -> list[User]:
+    async def get_all(self, limit=10, offset=0):
         rows = await db.fetch_all("SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset))
         return [User.from_row(r) for r in rows]
 
-    async def count(self) -> int:
-        r = await db.fetch_one("SELECT COUNT(*) c FROM users"); return int(r["c"]) if r else 0
+    async def count(self):
+        r = await db.fetch_one("SELECT COUNT(*) c FROM users")
+        return int(r["c"]) if r else 0
 
-    async def count_banned(self) -> int:
-        r = await db.fetch_one("SELECT COUNT(*) c FROM users WHERE is_banned=1"); return int(r["c"]) if r else 0
+    async def count_banned(self):
+        r = await db.fetch_one("SELECT COUNT(*) c FROM users WHERE is_banned=1")
+        return int(r["c"]) if r else 0
 
-    async def all_ids(self) -> list[int]:
+    async def all_ids(self):
         rows = await db.fetch_all("SELECT user_id FROM users WHERE is_banned=0")
         return [int(r["user_id"]) for r in rows]
 
@@ -492,24 +731,23 @@ class ProfileRepo:
         r = await db.fetch_one("SELECT * FROM profiles WHERE user_id=?", (uid,))
         return Profile.from_row(r) if r else None
 
-    async def delete(self, uid):
-        await db.execute("DELETE FROM profiles WHERE user_id=?", (uid,))
+    async def set_avatar(self, uid, avatar):
+        await db.execute("UPDATE profiles SET avatar_url=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?", (avatar, uid))
 
 
 class UserSettingsRepo:
     async def ensure(self, uid):
         await db.execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", (uid,))
 
-    async def get(self, uid) -> UserSettings:
+    async def get(self, uid):
         await self.ensure(uid)
         r = await db.fetch_one("SELECT * FROM user_settings WHERE user_id=?", (uid,))
         return UserSettings.from_row(r)
 
-    async def toggle(self, uid, field_name: str) -> int:
+    async def toggle(self, uid, field_name):
         await self.ensure(uid)
-        valid = {"web_mode", "silent_mode", "copyright_mode", "read_receipt"}
-        if field_name not in valid:
-            raise ValueError(f"field {field_name} invalid")
+        if field_name not in ("web_mode", "silent_mode", "copyright_mode", "read_receipt"):
+            raise ValueError("invalid")
         await db.execute(f"UPDATE user_settings SET {field_name} = 1 - {field_name} WHERE user_id=?", (uid,))
         r = await db.fetch_one(f"SELECT {field_name} AS v FROM user_settings WHERE user_id=?", (uid,))
         return int(r["v"]) if r else 0
@@ -519,7 +757,7 @@ class LinkRepo:
     async def create(self, token, owner, ltype):
         await db.execute("INSERT INTO anonymous_links (token, owner_id, link_type) VALUES (?,?,?)", (token, owner, ltype))
 
-    async def get(self, token) -> Optional[AnonymousLink]:
+    async def get(self, token):
         r = await db.fetch_one("SELECT * FROM anonymous_links WHERE token=?", (token,))
         return AnonymousLink.from_row(r) if r else None
 
@@ -529,22 +767,23 @@ class LinkRepo:
     async def delete(self, token):
         await db.execute("DELETE FROM anonymous_links WHERE token=?", (token,))
 
-    async def delete_all_owner(self, uid) -> int:
+    async def delete_all_owner(self, uid):
         c = await db.execute("DELETE FROM anonymous_links WHERE owner_id=?", (uid,))
         return c.rowcount or 0
 
-    async def active_of_owner(self, uid) -> list[AnonymousLink]:
+    async def active_of_owner(self, uid):
         rows = await db.fetch_all("SELECT * FROM anonymous_links WHERE owner_id=? ORDER BY created_at DESC", (uid,))
         return [AnonymousLink.from_row(r) for r in rows]
 
-    async def count_active(self) -> int:
+    async def count_active(self):
         r = await db.fetch_one("SELECT COUNT(*) c FROM anonymous_links WHERE link_type='permanent' OR is_used=0")
         return int(r["c"]) if r else 0
 
-    async def count_total(self) -> int:
-        r = await db.fetch_one("SELECT COUNT(*) c FROM anonymous_links"); return int(r["c"]) if r else 0
+    async def count_total(self):
+        r = await db.fetch_one("SELECT COUNT(*) c FROM anonymous_links")
+        return int(r["c"]) if r else 0
 
-    async def cleanup_onetime(self) -> int:
+    async def cleanup_onetime(self):
         c = await db.execute("DELETE FROM anonymous_links WHERE link_type='onetime' AND is_used=1")
         return c.rowcount or 0
 
@@ -553,14 +792,14 @@ class MessageRepo:
     async def create(self, owner, sender, token, content, ctype, fid):
         c = await db.execute(
             """INSERT INTO messages (owner_id, sender_id, sender_token, content, content_type, file_id)
-               VALUES (?,?,?,?,?,?)""", (owner, sender, token, content, ctype, fid),
-        )
+               VALUES (?,?,?,?,?,?)""", (owner, sender, token, content, ctype, fid))
         return c.lastrowid or 0
 
-    async def count_total(self) -> int:
-        r = await db.fetch_one("SELECT COUNT(*) c FROM messages"); return int(r["c"]) if r else 0
+    async def count_total(self):
+        r = await db.fetch_one("SELECT COUNT(*) c FROM messages")
+        return int(r["c"]) if r else 0
 
-    async def count_for(self, owner) -> int:
+    async def count_for(self, owner):
         r = await db.fetch_one("SELECT COUNT(*) c FROM messages WHERE owner_id=?", (owner,))
         return int(r["c"]) if r else 0
 
@@ -577,21 +816,21 @@ class TargetChatRepo:
 
 
 class PairingRepo:
-    async def create(self, u1, u2) -> int:
+    async def create(self, u1, u2):
         c = await db.execute("INSERT INTO pairings (user1_id, user2_id) VALUES (?,?)", (u1, u2))
         return c.lastrowid or 0
 
     async def active_for(self, uid):
         return await db.fetch_one(
             "SELECT * FROM pairings WHERE active=1 AND (user1_id=? OR user2_id=?) ORDER BY id DESC LIMIT 1",
-            (uid, uid),
-        )
+            (uid, uid))
 
     async def end(self, pid):
         await db.execute("UPDATE pairings SET active=0, ended_at=CURRENT_TIMESTAMP WHERE id=?", (pid,))
 
-    async def count_total(self) -> int:
-        r = await db.fetch_one("SELECT COUNT(*) c FROM pairings"); return int(r["c"]) if r else 0
+    async def count_total(self):
+        r = await db.fetch_one("SELECT COUNT(*) c FROM pairings")
+        return int(r["c"]) if r else 0
 
 
 class AdminLogRepo:
@@ -606,7 +845,7 @@ class AdminLogRepo:
 class SettingsRepo:
     KEY_CH = "required_channel"
 
-    async def get(self, key) -> Optional[str]:
+    async def get(self, key):
         r = await db.fetch_one("SELECT value FROM settings WHERE key=?", (key,))
         return r["value"] if r else None
 
@@ -635,7 +874,7 @@ settings_repo = SettingsRepo()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۷ — کیبوردها
+# 📌 بخش ۱۱ — کیبوردها
 # ═══════════════════════════════════════════════════════════════════════
 
 def _btn(t, style=None, **kw):
@@ -655,7 +894,22 @@ S_SUCCESS = ButtonStyle.SUCCESS if STYLE_SUPPORTED else None
 S_DANGER = ButtonStyle.DANGER if STYLE_SUPPORTED else None
 
 
-def main_menu_kb(is_admin=False) -> ReplyKeyboardMarkup:
+def language_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("🇮🇷 فارسی", S_PRIMARY, callback_data="lang:fa")],
+        [_ibtn("🇬🇧 English", S_PRIMARY, callback_data="lang:en")],
+        [_ibtn("🇸🇦 العربية", S_PRIMARY, callback_data="lang:ar")],
+    ])
+
+
+def rules_kb(lang="fa"):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn(t("accept_rules", lang), S_SUCCESS, callback_data="rules:accept")],
+        [_ibtn(t("decline_rules", lang), S_DANGER, callback_data="rules:decline")],
+    ])
+
+
+def main_menu_kb(is_admin=False, lang="fa"):
     kb = [
         [_btn("🔗 دریافت لینک ناشناس", S_PRIMARY)],
         [_btn("🎭 اتصال به یک ناشناس", S_PRIMARY)],
@@ -668,155 +922,7 @@ def main_menu_kb(is_admin=False) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, input_field_placeholder="یک گزینه...")
 
 
-def cancel_kb(cb="global:cancel") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[_ibtn("❌ لغو", S_DANGER, callback_data=cb)]])
-
-
-def confirm_kb(action) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        _ibtn("✅ بله", S_SUCCESS, callback_data=f"confirm:{action}"),
-        _ibtn("❌ انصراف", S_DANGER, callback_data=f"cancel:{action}"),
-    ]])
-
-
-# ─── پروفایل: جنسیت ───
-def gender_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("👨 پسر", S_PRIMARY, callback_data="pf:gender:male")],
-        [_ibtn("👩 دختر", S_PRIMARY, callback_data="pf:gender:female")],
-        [_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")],
-    ])
-
-
-# ─── پروفایل: انتخاب دهه سنی ───
-def age_decade_kb() -> InlineKeyboardMarkup:
-    ranges = [(9, 19), (20, 29), (30, 39), (40, 49), (50, 59), (60, 69), (70, 79), (80, 89), (90, 99)]
-    rows = []
-    for i in range(0, len(ranges), 3):
-        row = []
-        for lo, hi in ranges[i:i+3]:
-            row.append(_ibtn(f"{lo} - {hi}", S_PRIMARY, callback_data=f"pf:decade:{lo}:{hi}"))
-        rows.append(row)
-    rows.append([_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def age_exact_kb(lo: int, hi: int) -> InlineKeyboardMarkup:
-    ages = list(range(lo, hi + 1))
-    rows = []
-    for i in range(0, len(ages), 5):
-        row = [_ibtn(str(a), S_PRIMARY, callback_data=f"pf:age:{a}") for a in ages[i:i+5]]
-        rows.append(row)
-    rows.append([_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="pf:back_decade")])
-    rows.append([_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def provinces_kb(page: int = 0) -> InlineKeyboardMarkup:
-    per_page = 8
-    total = len(PROVINCES)
-    start = page * per_page
-    end = min(start + per_page, total)
-    rows = []
-    for p in PROVINCES[start:end]:
-        rows.append([_ibtn(p, S_PRIMARY, callback_data=f"pf:prov:{p}")])
-    nav = []
-    if page > 0:
-        nav.append(_ibtn("◀️ قبلی", S_PRIMARY, callback_data=f"pf:prov_page:{page-1}"))
-    if end < total:
-        nav.append(_ibtn("بعدی ▶️", S_PRIMARY, callback_data=f"pf:prov_page:{page+1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def cities_kb(province: str, page: int = 0) -> InlineKeyboardMarkup:
-    cities = IRAN_DATA.get(province, [])
-    per_page = 8
-    total = len(cities)
-    start = page * per_page
-    end = min(start + per_page, total)
-    rows = []
-    for c in cities[start:end]:
-        rows.append([_ibtn(c, S_PRIMARY, callback_data=f"pf:city:{c}")])
-    nav = []
-    if page > 0:
-        nav.append(_ibtn("◀️ قبلی", S_PRIMARY, callback_data=f"pf:city_page:{page-1}"))
-    if end < total:
-        nav.append(_ibtn("بعدی ▶️", S_PRIMARY, callback_data=f"pf:city_page:{page+1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([_ibtn("◀️ بازگشت به استان‌ها", S_PRIMARY, callback_data="pf:back_prov")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-# ─── لینک ناشناس ───
-def link_type_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("♾ لینک دائمی", S_PRIMARY, callback_data="linktype:permanent")],
-        [_ibtn("1️⃣ لینک یکبارمصرف", S_SUCCESS, callback_data="linktype:onetime")],
-        [_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")],
-    ])
-
-
-def link_actions_kb(token, ltype) -> InlineKeyboardMarkup:
-    share = f"https://t.me/share/url?url=https://t.me/{Config.BOT_USERNAME}?start={token}"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("📤 اشتراک‌گذاری", S_SUCCESS, url=share)],
-        [_ibtn("🗑 حذف لینک", S_DANGER, callback_data=f"link:del:{token}")],
-    ])
-
-
-# ─── تنظیمات کاربر ───
-def settings_kb(s: UserSettings) -> InlineKeyboardMarkup:
-    def mark(v): return "🟢" if v else "⚪"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn(f"{mark(s.web_mode)} حالت وب", S_PRIMARY, callback_data="uset:toggle:web_mode")],
-        [_ibtn(f"{mark(s.silent_mode)} حالت سایلنت", S_PRIMARY, callback_data="uset:toggle:silent_mode")],
-        [_ibtn(f"{mark(s.copyright_mode)} حالت کپی‌رایت", S_PRIMARY, callback_data="uset:toggle:copyright_mode")],
-        [_ibtn(f"{mark(s.read_receipt)} اعلان مشاهده پیام", S_PRIMARY, callback_data="uset:toggle:read_receipt")],
-        [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="uset:back")],
-    ])
-
-
-# ─── فیلترهای اتصال به ناشناس ───
-def match_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("🔍 شروع جستجو", S_SUCCESS, callback_data="match:start")],
-        [_ibtn("⚙️ تنظیم فیلترها", S_PRIMARY, callback_data="match:filters")],
-        [_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")],
-    ])
-
-
-def filter_gender_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("👨 پسر", S_PRIMARY, callback_data="filter:gender:male")],
-        [_ibtn("👩 دختر", S_PRIMARY, callback_data="filter:gender:female")],
-        [_ibtn("🤷 فرقی ندارد", S_PRIMARY, callback_data="filter:gender:any")],
-        [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="filter:back")],
-    ])
-
-
-def filter_city_kb(same_city: bool) -> InlineKeyboardMarkup:
-    label = "🟢 همشهری روشن" if same_city else "⚪ همشهری خاموش"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn(label, S_PRIMARY, callback_data="filter:city_toggle")],
-        [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="filter:back")],
-    ])
-
-
-# ─── اتصال به مخاطب خاص ───
-def target_chat_kb(token) -> InlineKeyboardMarkup:
-    share = f"https://t.me/share/url?url=https://t.me/{Config.BOT_USERNAME}?start=tc_{token}&text=یک پیام ناشناس برایت دارم"
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("📤 اشتراک‌گذاری لینک با مخاطب", S_SUCCESS, url=share)],
-        [_ibtn("🗑 لغو این اتصال", S_DANGER, callback_data=f"tc:cancel:{token}")],
-    ])
-
-
-# ─── پنل ادمین ───
-def admin_menu_kb() -> ReplyKeyboardMarkup:
+def admin_menu_kb():
     return ReplyKeyboardMarkup(keyboard=[
         [_btn("📊 آمار کلی", S_PRIMARY), _btn("👥 کاربران", S_PRIMARY)],
         [_btn("📢 پیام همگانی", S_PRIMARY), _btn("📝 لاگ‌ها", S_PRIMARY)],
@@ -827,14 +933,168 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
     ], resize_keyboard=True)
 
 
-def join_channel_kb(invite_url) -> InlineKeyboardMarkup:
+def cancel_kb(cb="global:cancel"):
+    return InlineKeyboardMarkup(inline_keyboard=[[_ibtn("❌ لغو", S_DANGER, callback_data=cb)]])
+
+
+def confirm_kb(action):
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        _ibtn("✅ بله", S_SUCCESS, callback_data=f"confirm:{action}"),
+        _ibtn("❌ انصراف", S_DANGER, callback_data=f"cancel:{action}"),
+    ]])
+
+
+def gender_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("👨 پسر", S_PRIMARY, callback_data="pf:gender:male")],
+        [_ibtn("👩 دختر", S_PRIMARY, callback_data="pf:gender:female")],
+        [_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")],
+    ])
+
+
+# ─── انتخاب سن دقیق (بدون دسته‌بندی) ───
+AGES_PER_PAGE = 25
+AGES_COLS = 5
+
+
+def age_grid_kb(page: int = 0) -> InlineKeyboardMarkup:
+    """
+    گرید انتخاب سن دقیق بدون دسته‌بندی.
+    هر صفحه ۲۵ سن (۵ ستون × ۵ ردیف).
+    صفحه ۰: 9-33 | صفحه ۱: 34-58 | صفحه ۲: 59-83 | صفحه ۳: 84-99
+    """
+    start = page * AGES_PER_PAGE
+    end = min(start + AGES_PER_PAGE, len(ALL_AGES))
+    chunk = ALL_AGES[start:end]
+    rows = []
+    for i in range(0, len(chunk), AGES_COLS):
+        row = [_ibtn(str(a), S_PRIMARY, callback_data=f"pf:age:{a}") for a in chunk[i:i + AGES_COLS]]
+        rows.append(row)
+
+    # ناوبری صفحه
+    nav = []
+    if page > 0:
+        nav.append(_ibtn("◀️ قبلی", S_PRIMARY, callback_data=f"pf:age_page:{page - 1}"))
+    if end < len(ALL_AGES):
+        nav.append(_ibtn("بعدی ▶️", S_PRIMARY, callback_data=f"pf:age_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def provinces_kb(page: int = 0):
+    per_page = 8
+    total = len(PROVINCES)
+    start = page * per_page
+    end = min(start + per_page, total)
+    rows = []
+    for p in PROVINCES[start:end]:
+        rows.append([_ibtn(p, S_PRIMARY, callback_data=f"pf:prov:{p}")])
+    nav = []
+    if page > 0:
+        nav.append(_ibtn("◀️ قبلی", S_PRIMARY, callback_data=f"pf:prov_page:{page - 1}"))
+    if end < total:
+        nav.append(_ibtn("بعدی ▶️", S_PRIMARY, callback_data=f"pf:prov_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cities_kb(province: str, page: int = 0):
+    cities = IRAN_DATA.get(province, [])
+    per_page = 8
+    total = len(cities)
+    start = page * per_page
+    end = min(start + per_page, total)
+    rows = []
+    for c in cities[start:end]:
+        rows.append([_ibtn(c, S_PRIMARY, callback_data=f"pf:city:{c}")])
+    nav = []
+    if page > 0:
+        nav.append(_ibtn("◀️ قبلی", S_PRIMARY, callback_data=f"pf:city_page:{page - 1}"))
+    if end < total:
+        nav.append(_ibtn("بعدی ▶️", S_PRIMARY, callback_data=f"pf:city_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([_ibtn("◀️ بازگشت به استان‌ها", S_PRIMARY, callback_data="pf:back_prov")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ─── ویرایش آواتار ───
+def avatar_edit_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("📸 آپلود عکس دلخواه", S_SUCCESS, callback_data="av:upload")],
+        [_ibtn("🎲 عکس تصادفی جدید", S_PRIMARY, callback_data="av:random")],
+        [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="av:back")],
+    ])
+
+
+def link_type_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("♾ لینک دائمی (چندبارمصرف)", S_PRIMARY, callback_data="linktype:permanent")],
+        [_ibtn("1️⃣ لینک یکبارمصرف", S_SUCCESS, callback_data="linktype:onetime")],
+        [_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")],
+    ])
+
+
+def link_actions_kb(token, ltype):
+    share = f"https://t.me/share/url?url=https://t.me/{Config.BOT_USERNAME}?start={token}"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("📤 اشتراک‌گذاری", S_SUCCESS, url=share)],
+        [_ibtn("🗑 حذف لینک", S_DANGER, callback_data=f"link:del:{token}")],
+    ])
+
+
+def settings_kb(s):
+    def m(v): return "🟢" if v else "⚪"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn(f"{m(s.web_mode)} حالت وب", S_PRIMARY, callback_data="uset:toggle:web_mode")],
+        [_ibtn(f"{m(s.silent_mode)} حالت سایلنت", S_PRIMARY, callback_data="uset:toggle:silent_mode")],
+        [_ibtn(f"{m(s.copyright_mode)} حالت کپی‌رایت", S_PRIMARY, callback_data="uset:toggle:copyright_mode")],
+        [_ibtn(f"{m(s.read_receipt)} اعلان مشاهده پیام", S_PRIMARY, callback_data="uset:toggle:read_receipt")],
+    ])
+
+
+def match_menu_kb(filters):
+    g = {"male": "👨 پسر", "female": "👩 دختر", "any": "🤷 فرقی ندارد"}[filters["gender"]]
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("🔍 شروع جستجو", S_SUCCESS, callback_data="match:start")],
+        [_ibtn(f"🎂 سن: {filters['min_age']}-{filters['max_age']}", S_PRIMARY, callback_data="filter:age")],
+        [_ibtn(f"🎭 جنسیت: {g}", S_PRIMARY, callback_data="filter:gender")],
+        [_ibtn(f"🏙 همشهری: {'🟢 روشن' if filters['same_city'] else '⚪ خاموش'}", S_PRIMARY, callback_data="filter:city")],
+        [_ibtn("❌ لغو", S_DANGER, callback_data="global:cancel")],
+    ])
+
+
+def filter_gender_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("👨 پسر", S_PRIMARY, callback_data="filter:gender:male")],
+        [_ibtn("👩 دختر", S_PRIMARY, callback_data="filter:gender:female")],
+        [_ibtn("🤷 فرقی ندارد", S_PRIMARY, callback_data="filter:gender:any")],
+        [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="filter:menu")],
+    ])
+
+
+def target_chat_kb(token):
+    share = (f"https://t.me/share/url?url=https://t.me/{Config.BOT_USERNAME}?start=tc_{token}"
+             f"&text=یک پیام ناشناس برایت دارم")
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_ibtn("📤 اشتراک‌گذاری لینک با مخاطب", S_SUCCESS, url=share)],
+        [_ibtn("🗑 لغو این اتصال", S_DANGER, callback_data=f"tc:cancel:{token}")],
+    ])
+
+
+def join_channel_kb(invite_url):
     return InlineKeyboardMarkup(inline_keyboard=[
         [_ibtn("📢 عضویت در کانال", S_PRIMARY, url=invite_url)],
         [_ibtn("✅ بررسی عضویت", S_SUCCESS, callback_data="check_join")],
     ])
 
 
-def admin_channel_manage_kb(has: bool) -> InlineKeyboardMarkup:
+def admin_channel_manage_kb(has):
     rows = [[_ibtn("🔧 تغییر / تنظیم کانال", S_PRIMARY, callback_data="admin_ch:set")]]
     if has:
         rows.append([_ibtn("🗑 حذف کانال", S_DANGER, callback_data="admin_ch:remove")])
@@ -842,14 +1102,26 @@ def admin_channel_manage_kb(has: bool) -> InlineKeyboardMarkup:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۸ — States
+# 📌 بخش ۱۲ — States
 # ═══════════════════════════════════════════════════════════════════════
+
+class LangStates(StatesGroup):
+    choosing = State()
+
+
+class RulesStates(StatesGroup):
+    showing = State()
+
 
 class ProfileStates(StatesGroup):
     gender = State()
     age = State()
     province = State()
     city = State()
+
+
+class AvatarStates(StatesGroup):
+    uploading = State()
 
 
 class LinkStates(StatesGroup):
@@ -866,6 +1138,10 @@ class TargetChatStates(StatesGroup):
     chat_active = State()
 
 
+class TargetCreatorStates(StatesGroup):
+    chatting = State()
+
+
 class MatchStates(StatesGroup):
     configuring = State()
     searching = State()
@@ -879,7 +1155,7 @@ class AdminStates(StatesGroup):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۹ — Middlewares
+# 📌 بخش ۱۳ — Middlewares
 # ═══════════════════════════════════════════════════════════════════════
 
 class BanCheckMiddleware(BaseMiddleware):
@@ -894,16 +1170,16 @@ class BanCheckMiddleware(BaseMiddleware):
             if u and u.is_banned:
                 reason = u.ban_reason or "بدون دلیل"
                 if isinstance(event, Message):
-                    await event.answer(f"🚫 بن شده‌اید.\nدلیل: {reason}")
+                    await event.answer(f"🚫 شما بن شده‌اید.\nدلیل: {reason}")
                 else:
-                    await event.answer("🚫 بن شده‌اید.", show_alert=True)
+                    await event.answer("🚫 شما بن شده‌اید.", show_alert=True)
                 return None
         if uid:
             data["user_id"] = uid
         return await handler(event, data)
 
 
-async def check_membership(bot: Bot, channel: str, uid: int) -> bool:
+async def check_membership(bot, channel, uid):
     try:
         m = await bot.get_chat_member(chat_id=channel, user_id=uid)
         return m.status not in ("left", "kicked")
@@ -926,8 +1202,7 @@ class JoinCheckMiddleware(BaseMiddleware):
             return await handler(event, data)
         if isinstance(event, CallbackQuery) and event.data == "check_join":
             ok = await check_membership(bot, required, uid)
-            await event.answer("✅ تأیید شد! حالا /start بزنید." if ok else "❌ هنوز عضو نیستید!",
-                                show_alert=True)
+            await event.answer("✅ تأیید شد! حالا /start بزنید." if ok else "❌ هنوز عضو نیستید!", show_alert=True)
             return None
         if await check_membership(bot, required, uid):
             return await handler(event, data)
@@ -938,8 +1213,7 @@ class JoinCheckMiddleware(BaseMiddleware):
                 url = await bot.export_chat_invite_link(required)
             except Exception:
                 url = "https://t.me/"
-        text = (f"🔒 <b>ورود محدود!</b>\n\nبرای استفاده از ربات، ابتدا در کانال زیر عضو شوید:\n\n"
-                f"📢 <b>{required}</b>")
+        text = f"🔒 <b>ورود محدود!</b>\n\nبرای استفاده از ربات، ابتدا در کانال زیر عضو شوید:\n\n📢 <b>{required}</b>"
         try:
             if isinstance(event, Message):
                 await event.answer(text, reply_markup=join_channel_kb(url))
@@ -958,13 +1232,17 @@ class RateLimitMiddleware(BaseMiddleware):
         self._buckets: dict[int, list[datetime]] = {}
 
     async def __call__(self, handler, event, data):
-        state: Optional[FSMContext] = data.get("state")
+        state = data.get("state")
+        allow_states = {
+            AnonymousStates.waiting_message.state,
+            MatchStates.chatting.state,
+            TargetChatStates.chat_active.state,
+            TargetCreatorStates.chatting.state,
+        }
         if state is not None:
             try:
                 cur = await state.get_state()
-                if cur != AnonymousStates.waiting_message.state and \
-                   cur != MatchStates.chatting.state and \
-                   cur != TargetChatStates.chat_active.state:
+                if cur not in allow_states:
                     return await handler(event, data)
             except Exception:
                 return await handler(event, data)
@@ -984,7 +1262,7 @@ class RateLimitMiddleware(BaseMiddleware):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۱۰ — سرویس‌ها
+# 📌 بخش ۱۴ — سرویس‌ها
 # ═══════════════════════════════════════════════════════════════════════
 
 class AuthService:
@@ -997,7 +1275,7 @@ class AuthService:
 
 
 class LinkService:
-    async def create(self, owner, ltype="onetime") -> dict:
+    async def create(self, owner, ltype="onetime"):
         if ltype not in ("permanent", "onetime"):
             return {"ok": False, "error": "نوع نامعتبر"}
         token = generate_secure_token()
@@ -1005,7 +1283,8 @@ class LinkService:
             token = generate_secure_token()
         await link_repo.create(token, owner, ltype)
         await user_repo.inc_link(owner)
-        return {"ok": True, "token": token, "link": f"https://t.me/{Config.BOT_USERNAME}?start={token}", "type": ltype}
+        return {"ok": True, "token": token, "type": ltype,
+                "link": f"https://t.me/{Config.BOT_USERNAME}?start={token}"}
 
     async def validate(self, token):
         if not token or len(token) < 10:
@@ -1014,7 +1293,7 @@ class LinkService:
         if not link:
             return False, None, "لینک وجود ندارد"
         if link.link_type == "onetime" and link.is_used:
-            return False, None, "قبلاً استفاده شده"
+            return False, None, "این لینک قبلاً استفاده شده"
         return True, link, ""
 
     async def consume(self, token, uid, ltype):
@@ -1023,10 +1302,10 @@ class LinkService:
 
 
 class MessageService:
-    async def send(self, bot, owner, sender, token, ctype, content, fid) -> dict:
+    async def send(self, bot, owner, sender, token, ctype, content, fid):
         await message_repo.create(owner, sender, token, content, ctype, fid)
         await user_repo.inc_msg(owner)
-        header = (f"📩 <b>پیام ناشناس جدید</b>\n🕐 {fa_now_str()}\n────────────\n")
+        header = f"📩 <b>پیام ناشناس جدید</b>\n🕐 {fa_now_str()}\n────────────\n"
         try:
             if ctype == "text":
                 await bot.send_message(owner, header + (content or ""))
@@ -1043,27 +1322,21 @@ class MessageService:
         except TelegramForbiddenError:
             return {"ok": False, "error": "مالک ربات را بلاک کرده"}
         except Exception as e:
-            log.exception("send anon: %s", e)
+            log.exception("send_anon: %s", e)
             return {"ok": False, "error": "خطای ارسال"}
         return {"ok": True}
 
 
 class MatchService:
-    """سیستم اتصال به یک ناشناس با صف در حافظه."""
-
     def __init__(self):
-        self.queue: list[dict] = []      # {user_id, filters, profile}
+        self.queue: list[dict] = []
 
-    async def find_or_queue(self, uid, filters, profile) -> Optional[int]:
-        """اگر مچ پیدا شد، آیدی پارتنر را برمی‌گرداند؛ در غیر این صورت None."""
-        # حذف خود از صف اگر قبلاً بود
+    async def find_or_queue(self, uid, filters, profile):
         self.queue = [q for q in self.queue if q["user_id"] != uid]
-
         for i, q in enumerate(self.queue):
             if self._compatible(filters, profile, q["filters"], q["profile"]):
                 partner = self.queue.pop(i)
                 return partner["user_id"]
-
         self.queue.append({"user_id": uid, "filters": filters, "profile": profile})
         return None
 
@@ -1071,27 +1344,18 @@ class MatchService:
         self.queue = [q for q in self.queue if q["user_id"] != uid]
 
     @staticmethod
-    def _compatible(f1, p1, f2, p2) -> bool:
-        # سن
-        if not (f1["min_age"] <= p2["age"] <= f1["max_age"]):
-            return False
-        if not (f2["min_age"] <= p1["age"] <= f2["max_age"]):
-            return False
-        # جنسیت
-        if f1["gender"] != "any" and f1["gender"] != p2["gender"]:
-            return False
-        if f2["gender"] != "any" and f2["gender"] != p1["gender"]:
-            return False
-        # همشهری
-        if f1["same_city"] and p1["city"] != p2["city"]:
-            return False
-        if f2["same_city"] and p1["city"] != p2["city"]:
-            return False
+    def _compatible(f1, p1, f2, p2):
+        if not (f1["min_age"] <= p2["age"] <= f1["max_age"]): return False
+        if not (f2["min_age"] <= p1["age"] <= f2["max_age"]): return False
+        if f1["gender"] != "any" and f1["gender"] != p2["gender"]: return False
+        if f2["gender"] != "any" and f2["gender"] != p1["gender"]: return False
+        if f1["same_city"] and p1["city"] != p2["city"]: return False
+        if f2["same_city"] and p1["city"] != p2["city"]: return False
         return True
 
 
 class AdminService:
-    async def stats(self) -> dict:
+    async def stats(self):
         return {
             "users": await user_repo.count(),
             "banned": await user_repo.count_banned(),
@@ -1102,9 +1366,9 @@ class AdminService:
             "channel": (await settings_repo.get_required_channel()) or "—",
         }
 
-    async def broadcast(self, bot, chat_id, msg_id, user_ids) -> dict:
+    async def broadcast(self, bot, chat_id, msg_id, users):
         s, f = 0, 0
-        for uid in user_ids:
+        for uid in users:
             try:
                 await bot.copy_message(uid, chat_id, msg_id)
                 s += 1
@@ -1122,11 +1386,14 @@ admin_svc = AdminService()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۱۱ — هندلرها
+# 📌 بخش ۱۵ — Routers و هندلرها
 # ═══════════════════════════════════════════════════════════════════════
 
 common_router = Router()
+lang_router = Router()
+rules_router = Router()
 profile_router = Router()
+avatar_router = Router()
 settings_router = Router()
 link_router = Router()
 anon_router = Router()
@@ -1135,19 +1402,112 @@ match_router = Router()
 admin_router = Router()
 
 
-# ─── /start ───
+# ─────────────────────────────────────────────────────────────────────
+# زبان و قوانین
+# ─────────────────────────────────────────────────────────────────────
+
+@lang_router.callback_query(F.data.startswith("lang:"))
+async def cb_lang(cb: CallbackQuery, state: FSMContext):
+    lang = cb.data.split(":")[1]
+    await user_repo.set_language(cb.from_user.id, lang)
+    await state.update_data(lang=lang)
+    await cb.answer(t("lang_set", lang) if "lang_set" in TRANSLATIONS.get(lang, {}) else "✅")
+
+    text = with_footer(f"{t('welcome_title', lang)}\n<i>{t('welcome_sub', lang)}</i>\n\n{get_rules(lang)}")
+    try:
+        await cb.message.edit_text(text, reply_markup=rules_kb(lang))
+    except TelegramBadRequest:
+        pass
+    await state.set_state(RulesStates.showing)
+
+
+@rules_router.callback_query(F.data == "rules:accept", RulesStates.showing)
+async def cb_rules_accept(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    lang = data.get("lang", "fa")
+    await user_repo.set_rules_accepted(cb.from_user.id)
+    await state.clear()
+
+    profile = await profile_repo.get(cb.from_user.id)
+    if not profile:
+        await state.set_state(ProfileStates.gender)
+        try:
+            await cb.message.edit_text(
+                with_footer("👋 <b>خوش آمدی!</b>\n\n1️⃣ <b>جنسیتت را انتخاب کن:</b>"),
+                reply_markup=gender_kb(),
+            )
+        except TelegramBadRequest:
+            pass
+    else:
+        try:
+            await cb.message.edit_text(
+                with_footer(t("main_menu", lang)),
+                reply_markup=main_menu_kb(cb.from_user.id == Config.ADMIN_ID, lang),
+            )
+        except TelegramBadRequest:
+            pass
+    await cb.answer("✅")
+
+
+@rules_router.callback_query(F.data == "rules:decline", RulesStates.showing)
+async def cb_rules_decline(cb: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    lang = data.get("lang", "fa")
+    await state.clear()
+    try:
+        await cb.message.edit_text(with_footer("😔 برای استفاده باید قوانین را بپذیری. /start"))
+    except TelegramBadRequest:
+        pass
+    await cb.answer("😔")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# /start
+# ─────────────────────────────────────────────────────────────────────
+
 @common_router.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject, state: FSMContext):
+async def cmd_start(message: Message, command: CommandObject, state: FSMContext, bot: Bot):
     await state.clear()
     uid = message.from_user.id
     await auth_svc.ensure(uid, message.from_user.full_name, message.from_user.username)
     payload = (command.args or "").strip()
+    user = await user_repo.get(uid)
+    lang = user.language if user else "fa"
 
-    # چک پروفایل
-    profile = await profile_repo.get(uid)
+    if not user or not user.rules_accepted:
+        await state.set_state(LangStates.choosing)
+        await message.answer(
+            with_footer("🌍 <b>زبان خود را انتخاب کنید / Choose language / اختر لغتك:</b>"),
+            reply_markup=language_kb(),
+        )
+        return
 
-    # ─── لینک ناشناس ───
-    if payload and not payload.startswith("tc_"):
+    if payload.startswith("tc_"):
+        token = payload[3:]
+        tc = await target_repo.get(token)
+        if not tc:
+            await message.answer(with_footer("❌ این لینک منقضی یا نامعتبر است."))
+            return
+        if tc["target_id"] != uid:
+            await message.answer("❌ این لینک برای شما نیست.")
+            return
+        profile = await profile_repo.get(uid)
+        if not profile:
+            await message.answer("⚠️ ابتدا باید پروفایل بسازی. /start")
+            return
+        await state.update_data(tc_creator=tc["creator_id"], tc_token=token)
+        await state.set_state(TargetChatStates.chat_active)
+        await message.answer(
+            with_footer("🔒 <b>چت ناشناس با مخاطب خاص</b>\n\nبرای پایان: /endchat"),
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        try:
+            await bot.send_message(tc["creator_id"], with_footer("🔔 <b>مخاطب خاص شما وارد چت شد!</b>"))
+        except Exception:
+            pass
+        return
+
+    if payload:
         ok, link, err = await link_svc.validate(payload)
         if not ok:
             await message.answer(with_footer(f"❌ {err}"), reply_markup=ReplyKeyboardRemove())
@@ -1155,62 +1515,34 @@ async def cmd_start(message: Message, command: CommandObject, state: FSMContext)
         if link.owner_id == uid:
             await message.answer("🙂 نمی‌توانی به خودت پیام بفرستی.")
             return
+        profile = await profile_repo.get(uid)
         if not profile:
             await message.answer("⚠️ ابتدا باید پروفایل بسازی. /start")
             return
         await state.update_data(token=payload, owner_id=link.owner_id, link_type=link.link_type)
         await state.set_state(AnonymousStates.waiting_message)
         await message.answer(
-            with_footer("📩 <b>ارسال پیام ناشناس</b>\n\nپیام خود را بفرست (متن/عکس/ویس/ویدیو/فایل)."),
+            with_footer("📩 <b>ارسال پیام ناشناس</b>\n\nپیام خود را بفرست:"),
             reply_markup=cancel_kb("anon:cancel"),
         )
         return
 
-    # ─── لینک مخاطب خاص ───
-    if payload.startswith("tc_"):
-        token = payload[3:]
-        tc = await target_repo.get(token)
-        if not tc:
-            await message.answer("❌ این لینک منقضی یا نامعتبر است.")
-            return
-        if tc["target_id"] != uid:
-            await message.answer("❌ این لینک برای شما نیست.")
-            return
-        if not profile:
-            await message.answer("⚠️ ابتدا پروفایل بساز. /start")
-            return
-        await state.update_data(target_creator=tc["creator_id"], target_token=token)
-        await state.set_state(TargetChatStates.chat_active)
-        await message.answer(
-            with_footer("🔒 <b>چت ناشناس با مخاطب خاص</b>\n\n"
-                        "حالا می‌توانی پیام بفرستی. هویت شما مخفی می‌ماند.\n"
-                        "برای پایان: /endchat"),
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        # اطلاع به سازنده
-        try:
-            await message.bot.send_message(tc["creator_id"],
-                with_footer("🔔 مخاطب خاص شما وارد چت شد! حالا می‌توانید چت کنید.\nبرای پایان: /endchat"))
-        except Exception:
-            pass
-        return
-
-    # ─── پروفایل وجود ندارد → ساخت ───
+    profile = await profile_repo.get(uid)
     if not profile:
         await state.set_state(ProfileStates.gender)
         await message.answer(
-            with_footer("👋 <b>خوش آمدی!</b>\n\n"
-                        "برای شروع، لطفاً پروفایل خودت را بساز:\n\n"
-                        "1️⃣ <b>جنسیتت را انتخاب کن:</b>"),
+            with_footer(
+                "👋 <b>خوش آمدی!</b> 🎉\n\n"
+                "برای شروع، پروفایلت را بساز:\n\n"
+                "1️⃣ <b>جنسیتت را انتخاب کن:</b>"
+            ),
             reply_markup=gender_kb(),
         )
         return
 
-    # ─── منوی اصلی ───
-    is_admin = uid == Config.ADMIN_ID
     await message.answer(
-        with_footer(f"🏠 <b>منوی اصلی</b>\n\nخوش آمدی {profile.gender == 'male' and 'آقا' or 'خانم'} 👋"),
-        reply_markup=main_menu_kb(is_admin),
+        with_footer(t("main_menu", lang)),
+        reply_markup=main_menu_kb(uid == Config.ADMIN_ID, lang),
     )
 
 
@@ -1222,7 +1554,7 @@ async def cmd_help(message: Message):
         "🎭 <b>اتصال به ناشناس:</b> با فیلتر سن/جنسیت/همشهری چت کن.\n"
         "👤 <b>مخاطب خاص:</b> به یک نفر خاص ناشناس پیام بده.\n"
         "⚙️ <b>تنظیمات:</b> حالت وب، سایلنت، کپی‌رایت، اعلان.\n"
-        "👤 <b>پروفایل:</b> مشاهده/ویرایش پروفایل.\n\n"
+        "👤 <b>پروفایل:</b> مشاهده/ویرایش پروفایل + عکس.\n\n"
         "دستورات: /start /help /cancel /profile /endchat"
     ))
 
@@ -1231,42 +1563,67 @@ async def cmd_help(message: Message):
 async def cmd_cancel(message: Message, state: FSMContext):
     match_svc.cancel(message.from_user.id)
     await state.clear()
-    await message.answer(with_footer("❌ عملیات لغو شد."),
-                         reply_markup=main_menu_kb(message.from_user.id == Config.ADMIN_ID))
+    user = await user_repo.get(message.from_user.id)
+    lang = user.language if user else "fa"
+    await message.answer(
+        with_footer("❌ عملیات لغو شد."),
+        reply_markup=main_menu_kb(message.from_user.id == Config.ADMIN_ID, lang),
+    )
 
 
 @common_router.message(Command("profile"))
 async def cmd_profile(message: Message, state: FSMContext):
     await state.clear()
-    await show_profile(message)
+    await _show_profile(message)
 
 
 @common_router.message(Command("endchat"))
-async def cmd_endchat(message: Message, state: FSMContext):
+async def cmd_endchat(message: Message, state: FSMContext, bot: Bot):
     uid = message.from_user.id
     cur = await state.get_state()
+    data = await state.get_data()
+    user = await user_repo.get(uid)
+    lang = user.language if user else "fa"
+
     if cur == MatchStates.chatting.state:
         p = await pairing_repo.active_for(uid)
         if p:
             await pairing_repo.end(p["id"])
             partner = p["user2_id"] if p["user1_id"] == uid else p["user1_id"]
             try:
-                await message.bot.send_message(partner, with_footer("🚪 مخاطب چت را پایان داد."))
+                await bot.send_message(partner, with_footer("🚪 مخاطب چت را پایان داد."))
             except Exception:
                 pass
         await state.clear()
-        await message.answer(with_footer("🚪 چت پایان یافت."),
-                             reply_markup=main_menu_kb(uid == Config.ADMIN_ID))
+        await message.answer(with_footer("🚪 چت پایان یافت."), reply_markup=main_menu_kb(uid == Config.ADMIN_ID, lang))
         return
+
     if cur == TargetChatStates.chat_active.state:
-        data = await state.get_data()
-        token = data.get("target_token")
-        if token:
-            await target_repo.deactivate(token)
+        token = data.get("tc_token")
+        creator = data.get("tc_creator")
+        if token: await target_repo.deactivate(token)
+        if creator:
+            try:
+                await bot.send_message(creator, with_footer("🚪 مخاطب چت را پایان داد."))
+            except Exception:
+                pass
         await state.clear()
-        await message.answer(with_footer("🚪 چت با مخاطب خاص پایان یافت."),
-                             reply_markup=main_menu_kb(uid == Config.ADMIN_ID))
+        await message.answer(with_footer("🚪 چت پایان یافت."), reply_markup=main_menu_kb(uid == Config.ADMIN_ID, lang))
         return
+
+    if cur == TargetCreatorStates.chatting.state:
+        token = data.get("tc_token_creator")
+        target = data.get("tc_target")
+        if token: await target_repo.deactivate(token)
+        if target:
+            try:
+                await bot.send_message(target, with_footer("🚪 سازنده چت را پایان داد."))
+            except Exception:
+                pass
+        await state.clear()
+        await message.answer(with_footer("🚪 چت پایان یافت."), reply_markup=main_menu_kb(uid == Config.ADMIN_ID, lang))
+        return
+
     await message.answer("چت فعالی نداری.")
 
 
@@ -1281,9 +1638,9 @@ async def cb_cancel(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای ساخت پروفایل
-# ═══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────
+# پروفایل — انتخاب جنسیت، سن دقیق، استان، شهر
+# ─────────────────────────────────────────────────────────────────────
 
 @profile_router.callback_query(F.data.startswith("pf:gender:"), ProfileStates.gender)
 async def pf_gender(cb: CallbackQuery, state: FSMContext):
@@ -1292,30 +1649,24 @@ async def pf_gender(cb: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileStates.age)
     try:
         await cb.message.edit_text(
-            with_footer("2️⃣ <b>سن خود را انتخاب کن:</b>\n\nابتدا یک دهه را انتخاب کن 👇"),
-            reply_markup=age_decade_kb(),
+            with_footer(
+                "2️⃣ <b>سن دقیق خود را انتخاب کن</b>\n\n"
+                "👆 از بین دکمه‌های زیر، سن واقعی خودت را انتخاب کن (۹ تا ۹۹ سال)."
+            ),
+            reply_markup=age_grid_kb(0),
         )
     except TelegramBadRequest:
         pass
     await cb.answer()
 
 
-@profile_router.callback_query(F.data.startswith("pf:decade:"), ProfileStates.age)
-async def pf_decade(cb: CallbackQuery, state: FSMContext):
-    _, _, lo, hi = cb.data.split(":")
-    await cb.message.edit_text(
-        with_footer(f"2️⃣ <b>سن دقیق خود را انتخاب کن</b> ({lo}-{hi}):"),
-        reply_markup=age_exact_kb(int(lo), int(hi)),
-    )
-    await cb.answer()
-
-
-@profile_router.callback_query(F.data == "pf:back_decade", ProfileStates.age)
-async def pf_back_decade(cb: CallbackQuery, state: FSMContext):
-    await cb.message.edit_text(
-        with_footer("2️⃣ <b>سن خود را انتخاب کن:</b>"),
-        reply_markup=age_decade_kb(),
-    )
+@profile_router.callback_query(F.data.startswith("pf:age_page:"), ProfileStates.age)
+async def pf_age_page(cb: CallbackQuery, state: FSMContext):
+    p = int(cb.data.split(":")[2])
+    try:
+        await cb.message.edit_reply_markup(reply_markup=age_grid_kb(p))
+    except TelegramBadRequest:
+        pass
     await cb.answer()
 
 
@@ -1326,7 +1677,7 @@ async def pf_age(cb: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileStates.province)
     try:
         await cb.message.edit_text(
-            with_footer("3️⃣ <b>استان خود را انتخاب کن:</b>"),
+            with_footer(f"✅ سن: <b>{age} سال</b>\n\n3️⃣ <b>استان خود را انتخاب کن:</b>"),
             reply_markup=provinces_kb(0),
         )
     except TelegramBadRequest:
@@ -1348,8 +1699,10 @@ async def pf_prov_page(cb: CallbackQuery, state: FSMContext):
 async def pf_back_prov(cb: CallbackQuery, state: FSMContext):
     await state.set_state(ProfileStates.province)
     try:
-        await cb.message.edit_text(with_footer("3️⃣ <b>استان خود را انتخاب کن:</b>"),
-                                    reply_markup=provinces_kb(0))
+        await cb.message.edit_text(
+            with_footer("3️⃣ <b>استان خود را انتخاب کن:</b>"),
+            reply_markup=provinces_kb(0),
+        )
     except TelegramBadRequest:
         pass
     await cb.answer()
@@ -1388,30 +1741,30 @@ async def pf_city(cb: CallbackQuery, state: FSMContext, bot: Bot):
     gender = data["gender"]
     age = data["age"]
     province = data["province"]
-    avatar = avatar_url(gender, cb.from_user.id)
+    # ساخت آواتار خوشگل با seed اختصاصی
+    seed = f"{cb.from_user.id}-{random.randint(1, 999999)}"
+    avatar = avatar_url(gender, seed)
 
     await profile_repo.create(cb.from_user.id, gender, age, province, city, avatar)
     await state.clear()
 
     gender_fa = "پسر 👨" if gender == "male" else "دختر 👩"
+    user = await user_repo.get(cb.from_user.id)
+    lang = user.language if user else "fa"
 
-    # تلاش برای ارسال عکس آواتار
+    caption = with_footer(
+        f"🎉 <b>پروفایل شما با موفقیت ساخته شد!</b> ✨\n\n"
+        f"👤 جنسیت: <b>{gender_fa}</b>\n"
+        f"🎂 سن: <b>{age} سال</b>\n"
+        f"🗺 استان: <b>{province}</b>\n"
+        f"🏙 شهر: <b>{city}</b>\n\n"
+        f"💡 برای تغییر عکس پروفایل، به «👤 پروفایل من» برو."
+    )
+
     try:
-        await bot.send_photo(
-            cb.from_user.id, avatar,
-            caption=with_footer(
-                f"🎉 <b>پروفایل شما با موفقیت ساخته شد!</b>\n\n"
-                f"👤 جنسیت: <b>{gender_fa}</b>\n"
-                f"🎂 سن: <b>{age} سال</b>\n"
-                f"🗺 استان: <b>{province}</b>\n"
-                f"🏙 شهر: <b>{city}</b>\n"
-            ),
-        )
+        await bot.send_photo(cb.from_user.id, avatar, caption=caption)
     except Exception:
-        await cb.message.answer(with_footer(
-            f"🎉 <b>پروفایل ساخته شد!</b>\n\n"
-            f"👤 {gender_fa} | 🎂 {age} سال\n🗺 {province} | 🏙 {city}"
-        ))
+        await cb.message.answer(caption)
 
     try:
         await cb.message.delete()
@@ -1419,14 +1772,17 @@ async def pf_city(cb: CallbackQuery, state: FSMContext, bot: Bot):
         pass
 
     await cb.message.answer(
-        with_footer("🏠 <b>منوی اصلی</b>\n\nالان می‌تونی از ربات استفاده کنی:"),
-        reply_markup=main_menu_kb(cb.from_user.id == Config.ADMIN_ID),
+        with_footer(t("main_menu", lang)),
+        reply_markup=main_menu_kb(cb.from_user.id == Config.ADMIN_ID, lang),
     )
-    await cb.answer("✅ پروفایل ساخته شد!")
+    await cb.answer("✅")
 
 
-@common_router.message(F.text == "👤 پروفایل من")
-async def show_profile(message: Message):
+# ─────────────────────────────────────────────────────────────────────
+# نمایش پروفایل + ویرایش آواتار
+# ─────────────────────────────────────────────────────────────────────
+
+async def _show_profile(message: Message):
     uid = message.from_user.id
     p = await profile_repo.get(uid)
     if not p:
@@ -1434,7 +1790,7 @@ async def show_profile(message: Message):
         return
     gender_fa = "پسر 👨" if p.gender == "male" else "دختر 👩"
     text = with_footer(
-        f"👤 <b>پروفایل شما</b>\n\n"
+        "👤 <b>پروفایل شما</b>\n\n"
         f"🎭 جنسیت: <b>{gender_fa}</b>\n"
         f"🎂 سن: <b>{p.age} سال</b>\n"
         f"🗺 استان: <b>{p.province}</b>\n"
@@ -1442,15 +1798,27 @@ async def show_profile(message: Message):
         f"📅 ساخت: <b>{p.created_at[:10]}</b>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("✏️ ویرایش پروفایل", S_PRIMARY, callback_data="pf:edit")],
+        [_ibtn("✏️ ویرایش اطلاعات", S_PRIMARY, callback_data="pf:edit")],
+        [_ibtn("🎨 تغییر عکس پروفایل", S_SUCCESS, callback_data="av:edit")],
     ])
+
+    # ارسال آواتار
     if p.avatar_url:
         try:
-            await message.answer_photo(p.avatar_url, caption=text, reply_markup=kb)
+            if is_custom_avatar(p.avatar_url):
+                fid = extract_file_id(p.avatar_url)
+                await message.answer_photo(fid, caption=text, reply_markup=kb)
+            else:
+                await message.answer_photo(p.avatar_url, caption=text, reply_markup=kb)
             return
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("خطا در ارسال آواتار: %s", e)
     await message.answer(text, reply_markup=kb)
+
+
+@common_router.message(F.text == "👤 پروفایل من")
+async def show_profile_btn(message: Message):
+    await _show_profile(message)
 
 
 @common_router.callback_query(F.data == "pf:edit")
@@ -1463,15 +1831,99 @@ async def cb_pf_edit(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای تنظیمات کاربر
-# ═══════════════════════════════════════════════════════════════════════
+# ─── ویرایش آواتار ───
+@avatar_router.callback_query(F.data == "av:edit")
+async def cb_av_edit(cb: CallbackQuery):
+    await cb.message.answer(
+        with_footer(
+            "🎨 <b>تغییر عکس پروفایل</b>\n\n"
+            "💡 یک روش را انتخاب کن:\n\n"
+            "📸 <b>آپلود عکس دلخواه:</b> هر عکسی که دوست داری آپلود کن.\n"
+            "🎲 <b>عکس تصادفی جدید:</b> یک کاراکتر کارتونی تازه بساز."
+        ),
+        reply_markup=avatar_edit_kb(),
+    )
+    await cb.answer()
+
+
+@avatar_router.callback_query(F.data == "av:back")
+async def cb_av_back(cb: CallbackQuery):
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+    await cb.answer("بازگشت")
+
+
+@avatar_router.callback_query(F.data == "av:random")
+async def cb_av_random(cb: CallbackQuery, bot: Bot):
+    p = await profile_repo.get(cb.from_user.id)
+    if not p:
+        await cb.answer("❌ پروفایل نداری.", show_alert=True)
+        return
+    seed = f"{cb.from_user.id}-{random.randint(1, 999999999)}"
+    new_avatar = avatar_url(p.gender, seed)
+    await profile_repo.set_avatar(cb.from_user.id, new_avatar)
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+    try:
+        await bot.send_photo(
+            cb.from_user.id, new_avatar,
+            caption=with_footer("🎲 <b>عکس پروفایل جدید ساخته شد!</b> ✨"),
+        )
+    except Exception:
+        pass
+    await cb.answer("✅ عکس جدید ساخته شد")
+
+
+@avatar_router.callback_query(F.data == "av:upload")
+async def cb_av_upload(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(AvatarStates.uploading)
+    try:
+        await cb.message.edit_text(
+            with_footer(
+                "📸 <b>آپلود عکس پروفایل</b>\n\n"
+                "عکس مورد نظرت را به‌صورت عکس (نه فایل) بفرست.\n"
+                "⚠️ فقط عکس‌ها پذیرفته می‌شوند.\n\n"
+                "برای لغو: /cancel"
+            ),
+            reply_markup=cancel_kb("global:cancel"),
+        )
+    except TelegramBadRequest:
+        pass
+    await cb.answer()
+
+
+@avatar_router.message(AvatarStates.uploading, F.photo)
+async def av_upload_photo(message: Message, state: FSMContext):
+    fid = message.photo[-1].file_id
+    await profile_repo.set_avatar(message.from_user.id, f"file:{fid}")
+    await state.clear()
+    try:
+        await message.answer_photo(
+            fid,
+            caption=with_footer("✅ <b>عکس پروفایل شما با موفقیت تغییر کرد!</b> 🎉"),
+        )
+    except Exception:
+        await message.answer(with_footer("✅ عکس پروفایل تغییر کرد."))
+
+
+@avatar_router.message(AvatarStates.uploading)
+async def av_upload_invalid(message: Message):
+    await message.answer("⚠️ فقط عکس بفرست (به‌صورت Photo، نه فایل).")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# تنظیمات کاربر
+# ─────────────────────────────────────────────────────────────────────
 
 @settings_router.message(F.text == "⚙️ تنظیمات من")
 async def user_settings_menu(message: Message):
     s = await usettings_repo.get(message.from_user.id)
     await message.answer(
-        with_footer("⚙️ <b>تنظیمات من</b>\n\nهر گزینه را لمس کن تا روشن/خاموش شود:"),
+        with_footer("⚙️ <b>تنظیمات من</b>\n\nهر گزینه را لمس کن:"),
         reply_markup=settings_kb(s),
     )
 
@@ -1485,36 +1937,21 @@ async def cb_uset_toggle(cb: CallbackQuery):
         await cb.message.edit_reply_markup(reply_markup=settings_kb(s))
     except TelegramBadRequest:
         pass
-    labels = {
-        "web_mode": "حالت وب",
-        "silent_mode": "حالت سایلنت",
-        "copyright_mode": "حالت کپی‌رایت",
-        "read_receipt": "اعلان مشاهده پیام",
-    }
+    labels = {"web_mode": "حالت وب", "silent_mode": "حالت سایلنت",
+              "copyright_mode": "حالت کپی‌رایت", "read_receipt": "اعلان مشاهده"}
     val = getattr(s, field)
     await cb.answer(f"{labels[field]}: {'روشن ✅' if val else 'خاموش ❌'}")
 
 
-@settings_router.callback_query(F.data == "uset:back")
-async def cb_uset_back(cb: CallbackQuery):
-    try:
-        await cb.message.delete()
-    except Exception:
-        pass
-    await cb.answer("بازگشت")
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای لینک ناشناس
-# ═══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────
+# لینک ناشناس
+# ─────────────────────────────────────────────────────────────────────
 
 @link_router.message(F.text == "🔗 دریافت لینک ناشناس")
 async def link_menu(message: Message, state: FSMContext):
     await state.set_state(LinkStates.choosing_type)
     await message.answer(
-        with_footer("🔗 <b>نوع لینک را انتخاب کن:</b>\n\n"
-                    "♾ <b>دائمی:</b> چندبارمصرف\n"
-                    "1️⃣ <b>یکبارمصرف:</b> فقط یک نفر"),
+        with_footer("🔗 <b>نوع لینک را انتخاب کن:</b>\n\n♾ دائمی | 1️⃣ یکبارمصرف"),
         reply_markup=link_type_kb(),
     )
 
@@ -1529,11 +1966,8 @@ async def cb_linktype(cb: CallbackQuery, state: FSMContext):
         await cb.answer(r["error"], show_alert=True)
         return
     label = "♾ دائمی" if ltype == "permanent" else "1️⃣ یکبارمصرف"
-    warn = ("🔓 چندبارمصرف" if ltype == "permanent" else "⚠️ فقط یکبار")
-    text = with_footer(
-        f"✅ <b>لینک آماده شد ({label})</b>\n\n"
-        f"🔗 <code>{r['link']}</code>\n\n{warn}"
-    )
+    warn = "🔓 چندبارمصرف" if ltype == "permanent" else "⚠️ فقط یکبار"
+    text = with_footer(f"✅ <b>لینک آماده ({label})</b>\n\n🔗 <code>{r['link']}</code>\n\n{warn}")
     try:
         await cb.message.edit_text(text, reply_markup=link_actions_kb(r["token"], ltype))
     except TelegramBadRequest:
@@ -1559,8 +1993,12 @@ async def cb_link_del(cb: CallbackQuery):
 @common_router.message(F.text == "🗑 حذف همه لینک‌ها")
 async def del_all_links(message: Message):
     n = await link_repo.delete_all_owner(message.from_user.id)
-    await message.answer(with_footer(f"🗑 {n} لینک حذف شد."),
-                         reply_markup=main_menu_kb(message.from_user.id == Config.ADMIN_ID))
+    user = await user_repo.get(message.from_user.id)
+    lang = user.language if user else "fa"
+    await message.answer(
+        with_footer(f"🗑 <b>{n}</b> لینک حذف شد."),
+        reply_markup=main_menu_kb(message.from_user.id == Config.ADMIN_ID, lang),
+    )
 
 
 @common_router.message(F.text == "📊 آمار من")
@@ -1572,19 +2010,20 @@ async def my_stats(message: Message):
     perm = sum(1 for l in links if l.link_type == "permanent")
     once = sum(1 for l in links if l.link_type == "onetime")
     text = with_footer(
-        f"📊 <b>آمار شما</b>\n\n"
+        "📊 <b>آمار شما</b>\n\n"
         f"📨 پیام‌های دریافتی: <b>{msgs}</b>\n"
         f"♾ لینک‌های دائمی: <b>{perm}</b>\n"
         f"1️⃣ لینک‌های یکبارمصرف: <b>{once}</b>\n"
+        + (f"\n🎂 سن: {p.age} | 🏙 {p.city}" if p else "")
     )
-    if p:
-        text += f"🎂 سن: {p.age} | 🏙 {p.city}\n"
-    await message.answer(text, reply_markup=main_menu_kb(uid == Config.ADMIN_ID))
+    user = await user_repo.get(uid)
+    lang = user.language if user else "fa"
+    await message.answer(text, reply_markup=main_menu_kb(uid == Config.ADMIN_ID, lang))
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای پیام ناشناس
-# ═══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────
+# پیام ناشناس
+# ─────────────────────────────────────────────────────────────────────
 
 @anon_router.message(AnonymousStates.waiting_message)
 async def anon_recv(message: Message, state: FSMContext):
@@ -1604,8 +2043,10 @@ async def anon_recv(message: Message, state: FSMContext):
         return
     await state.update_data(prev_t=ctype, prev_f=fid, prev_c=content)
     await state.set_state(AnonymousStates.confirm_send)
-    await message.answer(with_footer("📝 پیش‌نمایش آماده است. ارسال شود؟"),
-                         reply_markup=confirm_kb("anon"))
+    await message.answer(
+        with_footer("📝 پیش‌نمایش آماده است. ارسال شود؟"),
+        reply_markup=confirm_kb("anon"),
+    )
 
 
 @anon_router.callback_query(F.data == "cancel:anon")
@@ -1633,8 +2074,7 @@ async def cb_anon_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot):
         await state.clear()
         await cb.answer(f"❌ {err}", show_alert=True)
         return
-    r = await message_svc.send(bot, owner, cb.from_user.id, token,
-                                data["prev_t"], data["prev_c"], data["prev_f"])
+    r = await message_svc.send(bot, owner, cb.from_user.id, token, data["prev_t"], data["prev_c"], data["prev_f"])
     if not r["ok"]:
         await cb.answer(f"❌ {r['error']}", show_alert=True)
         return
@@ -1650,29 +2090,19 @@ async def cb_anon_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot):
     await cb.answer("✅")
 
 
-@anon_router.callback_query(F.data == "anon:cancel")
-async def cb_anon_cancel2(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    try:
-        await cb.message.edit_text(with_footer("❌ لغو شد."))
-    except TelegramBadRequest:
-        pass
-    await cb.answer()
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای اتصال به مخاطب خاص
-# ═══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────
+# مخاطب خاص
+# ─────────────────────────────────────────────────────────────────────
 
 @target_router.message(F.text == "👤 اتصال به مخاطب خاص")
 async def target_start(message: Message, state: FSMContext):
     await state.set_state(TargetChatStates.waiting_target)
     await message.answer(
-        with_footer("👤 <b>اتصال به مخاطب خاص</b>\n\n"
-                    "یکی از این کارها را انجام بده:\n\n"
-                    "1️⃣ <b>آیدی عددی</b> مخاطب را بفرست (مثلاً <code>123456789</code>)\n"
-                    "2️⃣ یا <b>یک پیام از مخاطبت را فوروارد کن</b>\n\n"
-                    "ربات یک لینک ناشناس می‌سازد که با آن می‌توانی مخفیانه چت کنی."),
+        with_footer(
+            "👤 <b>اتصال به مخاطب خاص</b>\n\n"
+            "1️⃣ <b>آیدی عددی</b> مخاطب را بفرست\n"
+            "2️⃣ یا <b>یک پیام از مخاطبت را فوروارد کن</b>"
+        ),
         reply_markup=cancel_kb("global:cancel"),
     )
 
@@ -1680,42 +2110,38 @@ async def target_start(message: Message, state: FSMContext):
 @target_router.message(TargetChatStates.waiting_target)
 async def target_receive(message: Message, state: FSMContext):
     target_id = None
-
-    # حالت ۱: فوروارد
     if message.forward_from:
         target_id = message.forward_from.id
     elif message.forward_from_chat:
-        await message.answer("⚠️ فوروارد از کانال پشتیبانی نمی‌شود. آیدی عددی بفرست.")
+        await message.answer("⚠️ فوروارد از کانال پشتیبانی نمی‌شود.")
         return
-    # حالت ۲: آیدی عددی در متن
     elif message.text and re.match(r"^\d{5,15}$", message.text.strip()):
         target_id = int(message.text.strip())
     else:
-        await message.answer("⚠️ فرمت نامعتبر. یک آیدی عددی یا فوروارد بفرست.")
+        await message.answer("⚠️ فرمت نامعتبر.")
         return
-
     if target_id == message.from_user.id:
         await message.answer("🙂 نمی‌توانی به خودت پیام بفرستی.")
         return
-
     token = generate_secure_token()
     await target_repo.create(token, message.from_user.id, target_id)
-    await state.clear()
+    await state.update_data(tc_token_creator=token, tc_target=target_id)
+    await state.set_state(TargetCreatorStates.chatting)
     await message.answer(
         with_footer(
             f"✅ <b>اتصال ساخته شد!</b>\n\n"
-            f"حالا این لینک را برای مخاطب خودت (<code>{target_id}</code>) بفرست:\n\n"
-            f"🔗 <code>https://t.me/{Config.BOT_USERNAME}?start=tc_{token}</code>\n\n"
-            f"⚠️ وقتی مخاطب روی لینک کلیک کند، چت ناشناس آغاز می‌شود."
+            f"این لینک را بفرست:\n\n"
+            f"🔗 <code>https://t.me/{Config.BOT_USERNAME}?start=tc_{token}</code>"
         ),
         reply_markup=target_chat_kb(token),
     )
 
 
 @target_router.callback_query(F.data.startswith("tc:cancel:"))
-async def cb_tc_cancel(cb: CallbackQuery):
+async def cb_tc_cancel(cb: CallbackQuery, state: FSMContext):
     token = cb.data.split(":", 2)[2]
     await target_repo.deactivate(token)
+    await state.clear()
     try:
         await cb.message.edit_text(with_footer("🗑 اتصال لغو شد."), reply_markup=None)
     except TelegramBadRequest:
@@ -1723,72 +2149,55 @@ async def cb_tc_cancel(cb: CallbackQuery):
     await cb.answer("✅")
 
 
-@target_router.message(TargetChatStates.chat_active)
+@target_router.message(TargetChatStates.chat_active, F.text | F.photo | F.voice | F.video | F.document | F.sticker)
 async def target_chat_msg(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    creator = data.get("target_creator")
+    creator = data.get("tc_creator")
     if not creator:
         await state.clear()
         return
-    # ریلی پیام به سازنده
     try:
         await message.copy_to(creator)
-        await bot.send_message(creator, with_footer("📩 <i>پاسخ خود را در چت بنویسید یا /endchat برای پایان</i>"))
-    except TelegramForbiddenError:
-        await message.answer("❌ مخاطب ربات را بلاک کرده.")
-        return
     except Exception as e:
-        log.exception("tc relay: %s", e)
+        log.exception("target_chat: %s", e)
 
 
-# ─── سمت سازنده: دریافت پیام از مخاطب ───
-@target_router.message(F.reply_to_message, StateFilter("*"))
-async def noop_reply(message: Message, state: FSMContext):
-    # placeholder برای routing بهتر
-    pass
-
-
-# ─── وقتی سازنده پاسخ می‌دهد ───
-@common_router.message(TargetChatStates.chat_active, F.text)
-async def target_creator_send(message: Message, state: FSMContext, bot: Bot):
-    # این هندلر فقط زمانی فعال است که کاربر در TargetChatStates.chat_active باشد
+@target_router.message(TargetCreatorStates.chatting, F.text | F.photo | F.voice | F.video | F.document | F.sticker)
+async def target_creator_msg(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
-    target_token = data.get("target_token")
-    if not target_token:
-        # شاید سازنده است
-        target_id = data.get("target_id")
-        if not target_id:
-            return
-        try:
-            await message.copy_to(target_id)
-        except Exception as e:
-            log.exception("send to target: %s", e)
+    target = data.get("tc_target")
+    token = data.get("tc_token_creator")
+    if not target or not token:
+        await state.clear()
         return
+    tc = await target_repo.get(token)
+    if not tc:
+        await message.answer("⚠️ این اتصال منقضی شده.")
+        await state.clear()
+        return
+    try:
+        await message.copy_to(target)
+    except Exception as e:
+        log.exception("target_creator: %s", e)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای اتصال به ناشناس
-# ═══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────
+# اتصال به ناشناس
+# ─────────────────────────────────────────────────────────────────────
 
-async def _ensure_filters(state: FSMContext, uid: int) -> dict:
+async def _ensure_filters(state: FSMContext, uid: int):
     data = await state.get_data()
     if "filters" not in data:
         p = await profile_repo.get(uid)
+        age = p.age if p else 25
         data["filters"] = {
-            "min_age": max(9, (p.age - 10) if p else 18),
-            "max_age": min(99, (p.age + 10) if p else 30),
+            "min_age": max(9, age - 10),
+            "max_age": min(99, age + 10),
             "gender": "any",
             "same_city": False,
         }
         await state.update_data(filters=data["filters"])
     return data["filters"]
-
-
-def filters_display(f: dict) -> str:
-    g = {"male": "👨 پسر", "female": "👩 دختر", "any": "🤷 فرقی ندارد"}[f["gender"]]
-    return (f"🎂 سن: {f['min_age']} تا {f['max_age']} سال\n"
-            f"🎭 جنسیت: {g}\n"
-            f"🏙 همشهری: {'🟢 روشن' if f['same_city'] else '⚪ خاموش'}")
 
 
 @match_router.message(F.text == "🎭 اتصال به یک ناشناس")
@@ -1801,83 +2210,42 @@ async def match_menu(message: Message, state: FSMContext):
     filters = await _ensure_filters(state, uid)
     await state.set_state(MatchStates.configuring)
     await message.answer(
-        with_footer(f"🎭 <b>اتصال به یک ناشناس</b>\n\n"
-                    f"<b>فیلترهای فعلی:</b>\n{filters_display(filters)}\n\n"
-                    f"برای شروع جستجو یا تغییر فیلترها، از دکمه‌ها استفاده کن:"),
-        reply_markup=match_menu_kb(),
+        with_footer("🎭 <b>اتصال به یک ناشناس</b>\n\nفیلترها را تنظیم کن:"),
+        reply_markup=match_menu_kb(filters),
     )
-
-
-@match_router.callback_query(F.data == "match:filters")
-async def cb_match_filters(cb: CallbackQuery, state: FSMContext):
-    filters = await _ensure_filters(state, cb.from_user.id)
-    text = with_footer(f"⚙️ <b>تنظیم فیلترها</b>\n\n{filters_display(filters)}\n\n"
-                       f"چه چیزی را تنظیم می‌کنی؟")
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_ibtn("🎂 محدوده سن", S_PRIMARY, callback_data="filter:age")],
-        [_ibtn("🎭 جنسیت", S_PRIMARY, callback_data="filter:gender")],
-        [_ibtn("🏙 همشهری", S_PRIMARY, callback_data="filter:city")],
-        [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="filter:back")],
-    ])
-    try:
-        await cb.message.edit_text(text, reply_markup=kb)
-    except TelegramBadRequest:
-        pass
-    await cb.answer()
-
-
-@match_router.callback_query(F.data == "filter:back")
-async def cb_filter_back(cb: CallbackQuery, state: FSMContext):
-    filters = await _ensure_filters(state, cb.from_user.id)
-    await state.set_state(MatchStates.configuring)
-    try:
-        await cb.message.edit_text(
-            with_footer(f"🎭 <b>اتصال به یک ناشناس</b>\n\nفیلترهای فعلی:\n{filters_display(filters)}"),
-            reply_markup=match_menu_kb(),
-        )
-    except TelegramBadRequest:
-        pass
-    await cb.answer()
 
 
 @match_router.callback_query(F.data == "filter:age")
 async def cb_filter_age(cb: CallbackQuery, state: FSMContext):
+    await state.update_data(awaiting_age=True)
     await cb.message.edit_text(
-        with_footer("🎂 <b>محدوده سنی</b>\n\nحداقل و حداکثر سن را به‌صورت «حداقل-حداکثر» بفرست.\nمثال: <code>20-30</code>"),
+        with_footer("🎂 <b>محدوده سنی</b>\n\n<code>20-30</code> بفرست."),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="filter:back")]
-        ]),
+            [_ibtn("◀️ بازگشت", S_PRIMARY, callback_data="filter:menu")]]),
     )
-    await state.update_data(awaiting_age_range=True)
     await cb.answer()
 
 
 @match_router.message(MatchStates.configuring, F.text.regexp(r"^\d{1,2}\s*-\s*\d{1,2}$"))
 async def match_age_input(message: Message, state: FSMContext):
     data = await state.get_data()
-    if not data.get("awaiting_age_range"):
+    if not data.get("awaiting_age"):
         return
-    lo, hi = re.split(r"\s*-\s*", message.text.strip())
-    lo, hi = int(lo), int(hi)
+    lo_s, hi_s = re.split(r"\s*-\s*", message.text.strip())
+    lo, hi = int(lo_s), int(hi_s)
     if not (9 <= lo <= 99 and 9 <= hi <= 99 and lo <= hi):
         await message.answer("⚠️ محدوده نامعتبر. مثال: <code>20-30</code>")
         return
     filters = data.get("filters") or {}
     filters["min_age"] = lo
     filters["max_age"] = hi
-    await state.update_data(filters=filters, awaiting_age_range=False)
-    await message.answer(
-        with_footer(f"✅ محدوده سن ذخیره شد: {lo} تا {hi}"),
-        reply_markup=match_menu_kb(),
-    )
+    await state.update_data(filters=filters, awaiting_age=False)
+    await message.answer(with_footer(f"✅ سن: <b>{lo} تا {hi}</b>"), reply_markup=match_menu_kb(filters))
 
 
 @match_router.callback_query(F.data == "filter:gender")
 async def cb_filter_gender(cb: CallbackQuery):
-    await cb.message.edit_text(
-        with_footer("🎭 <b>جنسیت مورد نظر</b>"),
-        reply_markup=filter_gender_kb(),
-    )
+    await cb.message.edit_text(with_footer("🎭 <b>جنسیت مورد نظر:</b>"), reply_markup=filter_gender_kb())
     await cb.answer()
 
 
@@ -1887,35 +2255,24 @@ async def cb_filter_gender_set(cb: CallbackQuery, state: FSMContext):
     filters = await _ensure_filters(state, cb.from_user.id)
     filters["gender"] = g
     await state.update_data(filters=filters)
-    await cb.message.edit_text(
-        with_footer(f"✅ جنسیت تنظیم شد: {filters_display(filters)}"),
-        reply_markup=match_menu_kb(),
-    )
+    await cb.message.edit_text(with_footer("🎭 <b>اتصال به یک ناشناس</b>"), reply_markup=match_menu_kb(filters))
     await cb.answer()
 
 
 @match_router.callback_query(F.data == "filter:city")
 async def cb_filter_city(cb: CallbackQuery, state: FSMContext):
     filters = await _ensure_filters(state, cb.from_user.id)
-    await cb.message.edit_text(
-        with_footer(f"🏙 <b>فیلتر همشهری</b>\n\nفقط با افرادی از شهر شما مچ کند؟\n\nفیلتر فعلی: {'🟢 روشن' if filters['same_city'] else '⚪ خاموش'}"),
-        reply_markup=filter_city_kb(filters["same_city"]),
-    )
-    await cb.answer()
-
-
-@match_router.callback_query(F.data == "filter:city_toggle")
-async def cb_filter_city_toggle(cb: CallbackQuery, state: FSMContext):
-    filters = await _ensure_filters(state, cb.from_user.id)
     filters["same_city"] = not filters["same_city"]
     await state.update_data(filters=filters)
-    try:
-        await cb.message.edit_text(
-            with_footer(f"🏙 همشهری: {'🟢 روشن' if filters['same_city'] else '⚪ خاموش'}"),
-            reply_markup=match_menu_kb(),
-        )
-    except TelegramBadRequest:
-        pass
+    await cb.message.edit_text(with_footer("🎭 <b>اتصال به یک ناشناس</b>"), reply_markup=match_menu_kb(filters))
+    await cb.answer(f"همشهری: {'روشن' if filters['same_city'] else 'خاموش'}")
+
+
+@match_router.callback_query(F.data == "filter:menu")
+async def cb_filter_menu(cb: CallbackQuery, state: FSMContext):
+    filters = await _ensure_filters(state, cb.from_user.id)
+    await state.update_data(awaiting_age=False)
+    await cb.message.edit_text(with_footer("🎭 <b>اتصال به یک ناشناس</b>"), reply_markup=match_menu_kb(filters))
     await cb.answer()
 
 
@@ -1928,59 +2285,42 @@ async def cb_match_start(cb: CallbackQuery, state: FSMContext, bot: Bot):
         return
     filters = await _ensure_filters(state, uid)
     profile_dict = {"gender": p.gender, "age": p.age, "city": p.city}
-
     partner_id = await match_svc.find_or_queue(uid, filters, profile_dict)
-
     if partner_id is None:
         await state.set_state(MatchStates.searching)
         try:
             await cb.message.edit_text(
-                with_footer(f"🔍 <b>در حال جستجو...</b>\n\n{filters_display(filters)}\n\n"
-                            f"منتظر بمان تا یک نفر متناسب با فیلترهایت پیدا شود."),
+                with_footer("🔍 <b>در حال جستجو...</b>"),
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [_ibtn("❌ لغو جستجو", S_DANGER, callback_data="match:cancel_search")]
-                ]),
+                    [_ibtn("❌ لغو جستجو", S_DANGER, callback_data="match:cancel_search")]]),
             )
         except TelegramBadRequest:
             pass
-        await cb.answer("🔍 جستجو آغاز شد")
+        await cb.answer("🔍")
         return
-
-    # مچ پیدا شد
     pid = await pairing_repo.create(uid, partner_id)
     await state.set_state(MatchStates.chatting)
     await state.update_data(pairing_id=pid, partner_id=partner_id)
-
+    for target_uid in (uid, partner_id):
+        try:
+            await bot.send_message(target_uid, with_footer("🎉 <b>یک ناشناس پیدا شد!</b>\n\n/endchat برای پایان"),
+                                    reply_markup=ReplyKeyboardRemove())
+        except Exception:
+            pass
     try:
-        await cb.message.edit_text(
-            with_footer("✅ <b>یک ناشناس پیدا شد!</b>\n\nحالا می‌توانی پیام بفرستی. هویت شما مخفی است.\n"
-                        "برای پایان: /endchat"),
-        )
+        await cb.message.edit_text(with_footer("✅ <b>یک ناشناس پیدا شد!</b>"))
     except TelegramBadRequest:
         pass
-
-    # اطلاع به پارتنر
-    try:
-        await bot.send_message(
-            partner_id,
-            with_footer("✅ <b>یک ناشناس پیدا شد!</b>\n\nحالا پیام بفرست. برای پایان: /endchat")
-        )
-        # پارتنر هم باید state داشته باشد — از طریق callback نمی‌شود، پس در هندلر بعدی handle می‌کنیم
-    except Exception:
-        pass
-
-    # ذخیره state برای پارتنر (در FSM Storage این امکان نیست، پس یک فلگ در دیتابیس نداریم.
-    # راه‌حل: از /start یا هر پیام پارتنر، در MatchStates.searching رد می‌کنیم)
-    await cb.answer("🎉 مچ پیدا شد")
+    await cb.answer("🎉")
 
 
 @match_router.callback_query(F.data == "match:cancel_search")
 async def cb_match_cancel(cb: CallbackQuery, state: FSMContext):
     match_svc.cancel(cb.from_user.id)
+    filters = await _ensure_filters(state, cb.from_user.id)
     await state.set_state(MatchStates.configuring)
     try:
-        await cb.message.edit_text(with_footer("❌ جستجو لغو شد."),
-                                    reply_markup=match_menu_kb())
+        await cb.message.edit_text(with_footer("❌ جستجو لغو شد."), reply_markup=match_menu_kb(filters))
     except TelegramBadRequest:
         pass
     await cb.answer()
@@ -1991,52 +2331,55 @@ async def match_chat_relay(message: Message, state: FSMContext, bot: Bot):
     data = await state.get_data()
     partner = data.get("partner_id")
     if not partner:
-        await state.clear()
-        return
+        p = await pairing_repo.active_for(message.from_user.id)
+        if not p:
+            await state.clear()
+            return
+        partner = p["user2_id"] if p["user1_id"] == message.from_user.id else p["user1_id"]
+        await state.update_data(partner_id=partner, pairing_id=p["id"])
     try:
         await message.copy_to(partner)
     except Exception as e:
-        log.exception("match relay: %s", e)
-        await message.answer("❌ ارسال نشد. شاید مخاطب ربات را بلاک کرده.")
+        log.exception("match_relay: %s", e)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# 📌 هندلرهای ادمین
-# ═══════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────
+# ادمین
+# ─────────────────────────────────────────────────────────────────────
 
 @admin_router.message(F.text == "👑 پنل ادمین")
 async def admin_panel(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     await message.answer(with_footer("👑 <b>پنل مدیریت</b>"), reply_markup=admin_menu_kb())
 
 
 @admin_router.message(F.text == "◀️ بازگشت")
 async def admin_back(message: Message):
-    await message.answer(with_footer("🏠 منوی اصلی"),
-                         reply_markup=main_menu_kb(message.from_user.id == Config.ADMIN_ID))
+    if message.from_user.id != Config.ADMIN_ID: return
+    await message.answer(with_footer("🏠 منوی اصلی"), reply_markup=main_menu_kb(True))
 
 
 @admin_router.message(F.text == "📊 آمار کلی")
 async def admin_stats(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     s = await admin_svc.stats()
-    await message.answer(with_footer(
-        "📊 <b>آمار کلی</b>\n\n"
-        f"👥 کاربران: <b>{s['users']}</b>\n"
-        f"🚫 بن: <b>{s['banned']}</b>\n"
-        f"🔗 لینک: <b>{s['links']}</b> (فعال: {s['active_links']})\n"
-        f"📨 پیام: <b>{s['messages']}</b>\n"
-        f"🤝 مچ‌ها: <b>{s['pairings']}</b>\n"
-        f"🔒 کانال: <b>{s['channel']}</b>"
-    ), reply_markup=admin_menu_kb())
+    await message.answer(
+        with_footer(
+            "📊 <b>آمار کلی</b>\n\n"
+            f"👥 کاربران: <b>{s['users']}</b>\n"
+            f"🚫 بن: <b>{s['banned']}</b>\n"
+            f"🔗 لینک: <b>{s['links']}</b> (فعال: {s['active_links']})\n"
+            f"📨 پیام: <b>{s['messages']}</b>\n"
+            f"🤝 مچ: <b>{s['pairings']}</b>\n"
+            f"🔒 کانال: <b>{s['channel']}</b>"
+        ),
+        reply_markup=admin_menu_kb(),
+    )
 
 
 @admin_router.message(F.text == "👥 کاربران")
 async def admin_users(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     users = await user_repo.get_all(10)
     lines = ["👥 <b>آخرین ۱۰ کاربر</b>\n"]
     for u in users:
@@ -2047,8 +2390,7 @@ async def admin_users(message: Message):
 
 @admin_router.message(F.text == "📝 لاگ‌ها")
 async def admin_logs(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     logs = await admin_log_repo.recent(10)
     if not logs:
         await message.answer(with_footer("لاگی نیست."), reply_markup=admin_menu_kb())
@@ -2061,36 +2403,26 @@ async def admin_logs(message: Message):
 
 @admin_router.message(F.text == "🗑 پاکسازی لینک‌ها")
 async def admin_cleanup(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     n = await link_repo.cleanup_onetime()
-    await admin_log_repo.log(Config.ADMIN_ID, "cleanup_links", None, f"{n}")
-    await message.answer(with_footer(f"🗑 {n} لینک یکبارمصرف حذف شد."),
-                         reply_markup=admin_menu_kb())
+    await admin_log_repo.log(Config.ADMIN_ID, "cleanup_links", None, str(n))
+    await message.answer(with_footer(f"🗑 <b>{n}</b> لینک حذف شد."), reply_markup=admin_menu_kb())
 
 
 @admin_router.message(F.text == "🔒 کانال اجباری")
 async def admin_channel(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     ch = await settings_repo.get_required_channel()
-    text = (f"🔒 <b>کانال اجباری</b>\n\nکانال فعلی: <code>{ch or '—'}</code>" if ch
-            else "🔒 <b>کانال اجباری</b>\n\n❗ تنظیم نشده")
+    text = f"🔒 <b>کانال اجباری</b>\n\nکانال: <code>{ch}</code>" if ch else "🔒 <b>کانال اجباری</b>\n\n❗ تنظیم نشده"
     await message.answer(with_footer(text), reply_markup=admin_channel_manage_kb(bool(ch)))
 
 
 @admin_router.callback_query(F.data == "admin_ch:set")
 async def admin_ch_set(cb: CallbackQuery, state: FSMContext):
-    if cb.from_user.id != Config.ADMIN_ID:
-        return
+    if cb.from_user.id != Config.ADMIN_ID: return
     await state.set_state(AdminStates.setting_channel)
     try:
-        await cb.message.edit_text(
-            with_footer("🔧 <b>تنظیم کانال اجباری</b>\n\n"
-                        "ارسال کنید: <code>@channel</code> یا <code>-100...</code> یا لینک\n"
-                        "⚠️ ربات باید ادمین کانال باشد.\n"
-                        "برای لغو: /cancel"),
-        )
+        await cb.message.edit_text(with_footer("🔧 <b>تنظیم کانال</b>\n\n<code>@channel</code> یا <code>-100...</code>"))
     except TelegramBadRequest:
         pass
     await cb.answer()
@@ -2098,11 +2430,10 @@ async def admin_ch_set(cb: CallbackQuery, state: FSMContext):
 
 @admin_router.callback_query(F.data == "admin_ch:remove")
 async def admin_ch_remove(cb: CallbackQuery):
-    if cb.from_user.id != Config.ADMIN_ID:
-        return
+    if cb.from_user.id != Config.ADMIN_ID: return
     await settings_repo.clear_required_channel()
     try:
-        await cb.message.edit_text(with_footer("🗑 کانال اجباری حذف شد."))
+        await cb.message.edit_text(with_footer("🗑 کانال حذف شد."))
     except TelegramBadRequest:
         pass
     await cb.answer("✅")
@@ -2110,8 +2441,7 @@ async def admin_ch_remove(cb: CallbackQuery):
 
 @admin_router.message(AdminStates.setting_channel)
 async def admin_ch_recv(message: Message, state: FSMContext, bot: Bot):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     parsed = parse_channel_input(message.text or "")
     if not parsed:
         await message.answer("❌ فرمت نامعتبر.")
@@ -2120,21 +2450,19 @@ async def admin_ch_recv(message: Message, state: FSMContext, bot: Bot):
         await bot.get_chat(parsed)
         await bot.get_chat_member(parsed, bot.id)
     except TelegramBadRequest as e:
-        await message.answer(f"❌ خطا: {e}\nربات را ادمین کانال کن.")
+        await message.answer(f"❌ خطا: {e}")
         return
     await settings_repo.set_required_channel(parsed)
     await admin_log_repo.log(Config.ADMIN_ID, "set_channel", None, parsed)
     await state.clear()
-    await message.answer(with_footer(f"✅ کانال تنظیم شد: <b>{parsed}</b>"),
-                         reply_markup=admin_menu_kb())
+    await message.answer(with_footer(f"✅ کانال تنظیم شد: <b>{parsed}</b>"), reply_markup=admin_menu_kb())
 
 
 @admin_router.message(F.text == "📢 پیام همگانی")
 async def admin_bcast(message: Message, state: FSMContext):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     await state.set_state(AdminStates.broadcasting)
-    await message.answer(with_footer("📢 پیام همگانی — پیام را بفرست.\nبرای لغو: /cancel"))
+    await message.answer(with_footer("📢 پیام همگانی — پیام را بفرست."))
 
 
 @admin_router.message(AdminStates.broadcasting)
@@ -2142,8 +2470,7 @@ async def admin_bcast_recv(message: Message, state: FSMContext):
     await state.update_data(bc_chat=message.chat.id, bc_msg=message.message_id)
     await state.set_state(AdminStates.broadcasting_confirm)
     n = await user_repo.count()
-    await message.answer(with_footer(f"⚠️ ارسال به {n} کاربر؟"),
-                         reply_markup=confirm_kb("broadcast"))
+    await message.answer(with_footer(f"⚠️ ارسال به <b>{n}</b> کاربر؟"), reply_markup=confirm_kb("broadcast"))
 
 
 @admin_router.callback_query(F.data == "cancel:broadcast")
@@ -2172,8 +2499,7 @@ async def admin_bcast_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot):
     r = await admin_svc.broadcast(bot, chat, msg, users)
     await admin_log_repo.log(Config.ADMIN_ID, "broadcast", None, f"{r['success']}/{r['failed']}")
     try:
-        await cb.message.edit_text(with_footer(
-            f"✅ پایان ارسال\n✅ موفق: {r['success']}\n❌ ناموفق: {r['failed']}"))
+        await cb.message.edit_text(with_footer(f"✅ پایان\nموفق: <b>{r['success']}</b>\nناموفق: <b>{r['failed']}</b>"))
     except TelegramBadRequest:
         pass
     await cb.answer()
@@ -2181,17 +2507,16 @@ async def admin_bcast_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot):
 
 @admin_router.message(F.text == "🚫 مدیریت بن‌ها")
 async def admin_ban_menu(message: Message):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
-    await message.answer(with_footer(
-        "🚫 مدیریت بن\n\n<code>/ban ID دلیل</code>\n<code>/unban ID</code>"
-    ), reply_markup=admin_menu_kb())
+    if message.from_user.id != Config.ADMIN_ID: return
+    await message.answer(
+        with_footer("🚫 <b>مدیریت بن</b>\n\n<code>/ban ID دلیل</code>\n<code>/unban ID</code>"),
+        reply_markup=admin_menu_kb(),
+    )
 
 
 @admin_router.message(Command("ban"))
 async def admin_ban(message: Message, command: CommandObject):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     args = (command.args or "").split(maxsplit=1)
     if not args or not args[0].isdigit():
         await message.answer("فرمت: <code>/ban ID دلیل</code>")
@@ -2205,19 +2530,18 @@ async def admin_ban(message: Message, command: CommandObject):
 
 @admin_router.message(Command("unban"))
 async def admin_unban(message: Message, command: CommandObject):
-    if message.from_user.id != Config.ADMIN_ID:
-        return
+    if message.from_user.id != Config.ADMIN_ID: return
     a = (command.args or "").strip()
     if not a.isdigit():
         await message.answer("فرمت: <code>/unban ID</code>")
         return
     await user_repo.unban(int(a))
     await admin_log_repo.log(Config.ADMIN_ID, "unban", int(a), "")
-    await message.answer(f"✅ آنبن شد.")
+    await message.answer("✅ آنبن شد.")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۱۲ — Scheduler
+# 📌 بخش ۱۶ — Scheduler
 # ═══════════════════════════════════════════════════════════════════════
 
 scheduler = AsyncIOScheduler()
@@ -2240,7 +2564,7 @@ async def job_last_seen():
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 📌 بخش ۱۳ — Main
+# 📌 بخش ۱۷ — Main
 # ═══════════════════════════════════════════════════════════════════════
 
 bot: Optional[Bot] = None
@@ -2252,6 +2576,8 @@ async def on_startup(bot: Bot, **kwargs):
     me = await bot.get_me()
     Config.BOT_USERNAME = me.username or Config.BOT_USERNAME
     log.info("🤖 @%s | 👑 Admin: %s", me.username, Config.ADMIN_ID)
+    ch = await settings_repo.get_required_channel()
+    log.info("🔒 کانال: %s", ch or "تنظیم نشده")
     try:
         await bot.send_message(Config.ADMIN_ID, f"✅ ربات راه‌اندازی شد.\n@{me.username}")
     except Exception:
@@ -2288,7 +2614,10 @@ async def main():
     dp.message.middleware(RateLimitMiddleware(Config.RATE_LIMIT_MESSAGES, Config.RATE_LIMIT_WINDOW))
 
     dp.include_router(admin_router)
+    dp.include_router(lang_router)
+    dp.include_router(rules_router)
     dp.include_router(profile_router)
+    dp.include_router(avatar_router)
     dp.include_router(settings_router)
     dp.include_router(target_router)
     dp.include_router(match_router)
