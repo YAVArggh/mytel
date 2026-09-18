@@ -59,8 +59,8 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════
 
 class Config:
-    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "8654406992:AAECfMfmYjc9_W8sFG-yNR78kASBh7CRMTs")
-    ADMIN_ID: int = int(os.getenv("ADMIN_ID", "8094551428"))
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "توکن خودت رو بزار")
+    ADMIN_ID: int = int(os.getenv("ADMIN_ID", "ایدی عددی ادمین"))
     BOT_USERNAME: str = os.getenv("BOT_USERNAME", "YourBot")
     DB_PATH: str = os.getenv("DB_PATH", "anon_v9.db")
     SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production-please")
