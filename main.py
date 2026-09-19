@@ -63,7 +63,7 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════════
 
 class Config:
-    BOT_TOKEN = os.getenv("BOT_TOKEN", "8885016188:AAHCwWCG7B7_CbJ5Tk4bDY70vn3hws-H6ek")
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "8654406992:AAECfMfmYjc9_W8sFG-yNR78kASBh7CRMTs")
     ADMIN_ID = int(os.getenv("ADMIN_ID", "8094551428"))
     BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBot")
     DB_PATH = os.getenv("DB_PATH", "anon_v11.db")
