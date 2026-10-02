@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-🤖 ربات پچ پچ - Ultra Pro Edition
-پیام ناشناس + پنل ادمین فوق حرفه‌ای + مهاجرت دیتابیس
+🤖 ربات پچ پچ - Ultra Pro Edition (Fixed)
+پیام ناشناس + پنل ادمین + مهاجرت دیتابیس
 """
 
 import asyncio
@@ -41,7 +41,8 @@ BOT_NAME = "پچ پچ"
 DB_FILE = "users.db"
 BACKUP_DIR = "backups"
 
-SUPER_ADMINS = [8094551428]  # ← آی‌دی عددی خودت را اینجا بگذار
+# ⚠️ آی‌دی عددی خودت را اینجا بگذار (از @userinfobot بگیر)
+SUPER_ADMINS = [8094551428]
 
 HOOK = hashlib.md5(BOT_TOKEN.encode()).hexdigest()
 
@@ -61,14 +62,36 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 
 
 # ============================================================
-#                    دیتابیس - ساخت + مهاجرت
+#                    نقشه callback کوتاه‌ساز
+# ============================================================
+
+CB_MAP = {}
+CB_REVERSE = {}
+_cb_counter = [0]
+
+def short_cb(long_data):
+    """تبدیل callback طولانی به کوتاه (محدودیت ۶۴ بایت تلگرام)"""
+    if long_data in CB_MAP:
+        return CB_MAP[long_data]
+    _cb_counter[0] += 1
+    short = f"c{_cb_counter[0]}"
+    CB_MAP[long_data] = short
+    CB_REVERSE[short] = long_data
+    return short
+
+
+def resolve_cb(short):
+    return CB_REVERSE.get(short, short)
+
+
+# ============================================================
+#                    دیتابیس
 # ============================================================
 
 def db_init():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     c = conn.cursor()
 
-    # ---------- ساخت جدول‌ها ----------
     c.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         telegram_user_id TEXT UNIQUE,
@@ -79,7 +102,9 @@ def db_init():
         last_seen TEXT,
         message_count INTEGER DEFAULT 0,
         points INTEGER DEFAULT 0,
-        referred_by TEXT
+        referred_by TEXT,
+        display_name TEXT DEFAULT '',
+        show_link INTEGER DEFAULT 1
     )""")
 
     c.execute("""CREATE TABLE IF NOT EXISTS settings (
@@ -118,10 +143,8 @@ def db_init():
 
     conn.commit()
 
-    # ---------- مهاجرت دیتابیس قدیمی ----------
     migrate_db(c)
 
-    # ---------- مقادیر پیش‌فرض تنظیمات ----------
     defaults = {
         "maintenance": "0",
         "maintenance_text": "🔧 ربات در حال تعمیر است.\nلطفاً بعداً مراجعه کنید.",
@@ -162,7 +185,6 @@ def db_init():
 
 
 def migrate_db(cursor):
-    """افزودن ستون‌های جدید به جدول users در صورت وجود نسخه قدیمی."""
     try:
         cursor.execute("PRAGMA table_info(users)")
         cols = [row[1] for row in cursor.fetchall()]
@@ -177,6 +199,8 @@ def migrate_db(cursor):
         "message_count": "INTEGER DEFAULT 0",
         "points": "INTEGER DEFAULT 0",
         "referred_by": "TEXT",
+        "display_name": "TEXT DEFAULT ''",
+        "show_link": "INTEGER DEFAULT 1",
     }
 
     added = []
@@ -190,10 +214,7 @@ def migrate_db(cursor):
 
     if added:
         log.info("✅ ستون‌های جدید اضافه شدند: %s", ", ".join(added))
-    else:
-        log.info("✅ ساختار دیتابیس به‌روز است.")
 
-    # پر کردن مقادیر خالی برای رکوردهای قدیمی
     now = datetime.now().isoformat()
     cursor.execute("UPDATE users SET joined_at = ? WHERE joined_at IS NULL", (now,))
     cursor.execute("UPDATE users SET last_seen = ? WHERE last_seen IS NULL", (now,))
@@ -201,6 +222,8 @@ def migrate_db(cursor):
     cursor.execute("UPDATE users SET message_count = 0 WHERE message_count IS NULL")
     cursor.execute("UPDATE users SET points = 0 WHERE points IS NULL")
     cursor.execute("UPDATE users SET referred_by = '' WHERE referred_by IS NULL")
+    cursor.execute("UPDATE users SET display_name = '' WHERE display_name IS NULL")
+    cursor.execute("UPDATE users SET show_link = 1 WHERE show_link IS NULL")
 
 
 conn = db_init()
@@ -490,12 +513,20 @@ class AdminStates(StatesGroup):
     find_user = State()
 
 
+class ProfileStates(StatesGroup):
+    waiting_name = State()
+
+
 # ============================================================
 #                    کیبوردها
 # ============================================================
 
 def color_button(text, callback_data, style="primary"):
-    return InlineKeyboardButton(text=text, callback_data=callback_data, style=style)
+    return InlineKeyboardButton(
+        text=text,
+        callback_data=short_cb(callback_data),
+        style=style,
+    )
 
 
 def main_reply_keyboard():
@@ -593,7 +624,7 @@ def adm_back_kb(extra=None):
 
 
 # ============================================================
-#                    تنظیم منوی دستورات (سمت چپ)
+#                    منوی دستورات
 # ============================================================
 
 async def set_bot_commands():
@@ -745,9 +776,11 @@ async def cmd_profile(message: Message):
         await message.answer("❌ ابتدا /start را بزنید.")
         return
     link = f"https://t.me/{BOT_ID.lstrip('@')}?start={user['rkey']}_{hxId(user['id'])}"
+    display = user.get("display_name") or "—"
     await message.answer(
         f"👤 <b>پروفایل شما</b>\n\n"
         f"🆔 آی‌دی: <code>{user['id']}</code>\n"
+        f"📛 نام نمایشی: <b>{display}</b>\n"
         f"🔑 کلید: <code>{user['rkey']}</code>\n"
         f"🎁 امتیاز: <b>{user['points']}</b>\n"
         f"💬 پیام‌های ارسالی: <b>{user['message_count']}</b>\n\n"
@@ -886,20 +919,17 @@ async def on_text(message: Message, state: FSMContext):
     db_update_last_seen(chat_id)
     text = message.text or ""
 
-    # کد تخفیف
     cur = conn.execute("SELECT 1 FROM coupons WHERE code = ?", (text.strip(),))
     if cur.fetchone() and not text.startswith("/"):
         result = use_coupon(text.strip(), chat_id)
         await message.answer(result, reply_markup=main_reply_keyboard())
         return
 
-    # دکمه‌های سفارشی
     for cb in all_custom_buttons():
         if text == cb["text"]:
             await message.answer(cb["reply_text"])
             return
 
-    # دکمه‌های اصلی
     if text == get_setting("btn_help"):
         await cmd_help(message); return
     if text == get_setting("btn_profile"):
@@ -913,7 +943,6 @@ async def on_text(message: Message, state: FSMContext):
     if text == get_setting("btn_cancel"):
         await cmd_cancel(message); return
 
-    # ارسال ناشناس
     me = db_get_user_by_tg(chat_id)
     if me and me["target_user"]:
         await send_anonymous(message, me)
@@ -963,82 +992,6 @@ async def on_other(message: Message):
 
 
 # ============================================================
-#                    Callback - کاربران
-# ============================================================
-
-@dp.callback_query()
-async def on_callback(cq: CallbackQuery, state: FSMContext):
-    data = cq.data or ""
-    chat_id = cq.from_user.id
-
-    if data.startswith("adm_"):
-        if not is_admin(chat_id):
-            await cq.answer("⛔️", show_alert=True)
-            return
-        await handle_admin_callback(cq, state)
-        return
-
-    if data.startswith("style_"):
-        if not is_admin(chat_id):
-            await cq.answer("⛔️", show_alert=True)
-            return
-        await handle_style_callback(cq, state)
-        return
-
-    if data == "check_join":
-        if await check_force_join(chat_id):
-            await cq.message.edit_text("✅ عضویت تأیید شد! حالا /start را بزنید.")
-        else:
-            await cq.answer("❌ هنوز عضو نشده‌اید.", show_alert=True)
-        return
-
-    if get_setting("maintenance") == "1" and not is_admin(chat_id):
-        await cq.answer(get_setting("maintenance_text"), show_alert=True)
-        return
-
-    if not is_admin(chat_id) and not await check_force_join(chat_id):
-        await cq.answer("⚠️ ابتدا در کانال‌ها عضو شوید.", show_alert=True)
-        return
-
-    if data == "make_link":
-        await cmd_link(cq.message); await cq.answer("✅"); return
-
-    if data == "share_link":
-        u = db_get_user_by_tg(chat_id)
-        if u:
-            link = f"https://t.me/{BOT_ID.lstrip('@')}?start={u['rkey']}_{hxId(u['id'])}"
-            await cq.message.answer(
-                f"📤 کپی کن:\n\n<code>🔗 به من پیام ناشناس بده:\n{link}</code>"
-            )
-        await cq.answer("📋"); return
-
-    if data == "delete_msg":
-        try:
-            await cq.message.delete()
-        except Exception:
-            pass
-        await cq.answer("🗑"); return
-
-    if data in ("edit_name", "privacy", "delete_account"):
-        await cq.answer("ℹ️ به‌زودی...", show_alert=True); return
-
-    # دکمه پاسخ
-    try:
-        rid = int(decrypt(data))
-    except Exception:
-        await cq.answer(); return
-
-    target = db_get_user_by_id(rid)
-    if not target:
-        await cq.answer(); return
-
-    db_update_target_by_tg(target["telegram_user_id"], chat_id)
-    await bot.send_message(chat_id, get_setting("target_prompt"),
-                           reply_to_message_id=cq.message.message_id)
-    await cq.answer("✅ بفرست")
-
-
-# ============================================================
 #                    آمار
 # ============================================================
 
@@ -1069,11 +1022,209 @@ async def send_stats(msg_or_cq):
 
 
 # ============================================================
+#                    Callback - کاربران
+# ============================================================
+
+@dp.callback_query()
+async def on_callback(cq: CallbackQuery, state: FSMContext):
+    raw = cq.data or ""
+    data = resolve_cb(raw)
+    chat_id = cq.from_user.id
+
+    # ===== ادمین =====
+    if data.startswith("adm_"):
+        if not is_admin(chat_id):
+            await cq.answer("⛔️ دسترسی ندارید", show_alert=True)
+            return
+        try:
+            await handle_admin_callback(cq, state, data)
+        except Exception as e:
+            log.exception("خطا در پنل ادمین: %s", e)
+            await cq.answer(f"❌ خطا: {e}", show_alert=True)
+        return
+
+    if data.startswith("style_"):
+        if not is_admin(chat_id):
+            await cq.answer("⛔️", show_alert=True)
+            return
+        try:
+            await handle_style_callback(cq, state, data)
+        except Exception as e:
+            log.exception("خطا در استایل: %s", e)
+            await cq.answer(f"❌ {e}", show_alert=True)
+        return
+
+    # ===== جوین =====
+    if data == "check_join":
+        if await check_force_join(chat_id):
+            try:
+                await cq.message.edit_text("✅ عضویت تأیید شد! حالا /start را بزنید.")
+            except Exception:
+                await cq.message.answer("✅ عضویت تأیید شد! حالا /start را بزنید.")
+        else:
+            await cq.answer("❌ هنوز عضو نشده‌اید.", show_alert=True)
+        return
+
+    if get_setting("maintenance") == "1" and not is_admin(chat_id):
+        await cq.answer(get_setting("maintenance_text"), show_alert=True)
+        return
+
+    if not is_admin(chat_id) and not await check_force_join(chat_id):
+        await cq.answer("⚠️ ابتدا در کانال‌ها عضو شوید.", show_alert=True)
+        return
+
+    # ===== دکمه‌های کاربر =====
+    if data == "make_link":
+        await cmd_link(cq.message)
+        await cq.answer("✅")
+        return
+
+    if data == "share_link":
+        u = db_get_user_by_tg(chat_id)
+        if u:
+            link = f"https://t.me/{BOT_ID.lstrip('@')}?start={u['rkey']}_{hxId(u['id'])}"
+            await cq.message.answer(
+                f"📤 کپی کن:\n\n<code>🔗 به من پیام ناشناس بده:\n{link}</code>"
+            )
+        await cq.answer("📋")
+        return
+
+    if data == "delete_msg":
+        try:
+            await cq.message.delete()
+        except Exception:
+            pass
+        try:
+            await cq.answer("🗑 حذف شد")
+        except Exception:
+            pass
+        return
+
+    # ===== تغییر نام =====
+    if data == "edit_name":
+        await cq.message.answer("✏️ نام جدید خود را بفرستید (۲ تا ۳۲ کاراکتر):")
+        await state.set_state(ProfileStates.waiting_name)
+        await cq.answer()
+        return
+
+    # ===== حریم خصوصی =====
+    if data == "privacy":
+        u = db_get_user_by_tg(chat_id)
+        show_link = u.get("show_link", 1) if u else 1
+        rows = [
+            [color_button(
+                f"🔗 نمایش لینک: {'✅ روشن' if show_link else '❌ خاموش'}",
+                "toggle_show_link",
+                "success" if show_link else "danger",
+            )],
+            [color_button("🔙 بستن", "close_profile_msg", "primary")],
+        ]
+        try:
+            await cq.message.edit_text(
+                "🔒 <b>حریم خصوصی</b>\n\n"
+                "اگر نمایش لینک خاموش باشد، دیگران نمی‌توانند از لینک ناشناس شما استفاده کنند.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
+        except Exception:
+            await cq.message.answer(
+                "🔒 <b>حریم خصوصی</b>",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
+        await cq.answer()
+        return
+
+    if data == "toggle_show_link":
+        u = db_get_user_by_tg(chat_id)
+        new = 0 if (u and u.get("show_link", 1)) else 1
+        conn.execute("UPDATE users SET show_link = ? WHERE telegram_user_id = ?",
+                     (new, str(chat_id)))
+        conn.commit()
+        show_link = new
+        rows = [
+            [color_button(
+                f"🔗 نمایش لینک: {'✅ روشن' if show_link else '❌ خاموش'}",
+                "toggle_show_link",
+                "success" if show_link else "danger",
+            )],
+            [color_button("🔙 بستن", "close_profile_msg", "primary")],
+        ]
+        try:
+            await cq.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+            )
+        except Exception:
+            pass
+        await cq.answer(f"{'✅ روشن' if new else '❌ خاموش'}")
+        return
+
+    if data == "close_profile_msg":
+        try:
+            await cq.message.delete()
+        except Exception:
+            pass
+        await cq.answer()
+        return
+
+    # ===== حذف حساب =====
+    if data == "delete_account":
+        rows = [
+            [color_button("⚠️ بله، حذف کن", "confirm_delete_account", "danger")],
+            [color_button("🔙 انصراف", "cancel_delete", "primary")],
+        ]
+        try:
+            await cq.message.edit_text(
+                "⚠️ <b>هشدار!</b>\n\n"
+                "آیا از حذف حساب خود مطمئنی؟\n"
+                "تمام امتیازات و اطلاعات از بین می‌رود.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            )
+        except Exception:
+            await cq.message.answer("⚠️ مطمئنی؟",
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await cq.answer()
+        return
+
+    if data == "confirm_delete_account":
+        conn.execute("DELETE FROM users WHERE telegram_user_id = ?", (str(chat_id),))
+        conn.commit()
+        try:
+            await cq.message.edit_text("✅ حساب شما حذف شد.\nبرای شروع مجدد /start بزنید.")
+        except Exception:
+            await cq.message.answer("✅ حساب حذف شد.")
+        await cq.answer("حذف شد")
+        return
+
+    if data == "cancel_delete":
+        try:
+            await cq.message.delete()
+        except Exception:
+            pass
+        await cq.answer("لغو شد")
+        return
+
+    # ===== دکمه پاسخ ناشناس =====
+    try:
+        rid = int(decrypt(data))
+    except Exception:
+        await cq.answer()
+        return
+
+    target = db_get_user_by_id(rid)
+    if not target:
+        await cq.answer()
+        return
+
+    db_update_target_by_tg(target["telegram_user_id"], chat_id)
+    await bot.send_message(chat_id, get_setting("target_prompt"),
+                           reply_to_message_id=cq.message.message_id)
+    await cq.answer("✅ بفرست")
+
+
+# ============================================================
 #                    Callback ادمین
 # ============================================================
 
-async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
-    data = cq.data
+async def handle_admin_callback(cq: CallbackQuery, state: FSMContext, data: str):
     chat_id = cq.from_user.id
 
     if data == "adm_stats":
@@ -1083,14 +1234,20 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         new = "0" if get_setting("maintenance") == "1" else "1"
         set_setting("maintenance", new)
         log_event("maintenance_toggle", chat_id, new)
-        await cq.message.edit_reply_markup(reply_markup=admin_panel_keyboard())
+        try:
+            await cq.message.edit_reply_markup(reply_markup=admin_panel_keyboard())
+        except Exception:
+            pass
         await cq.answer(f"🔧 {'روشن' if new == '1' else 'خاموش'}")
         return
 
     if data == "adm_toggle_forcejoin":
         new = "0" if get_setting("force_join") == "1" else "1"
         set_setting("force_join", new)
-        await cq.message.edit_reply_markup(reply_markup=admin_panel_keyboard())
+        try:
+            await cq.message.edit_reply_markup(reply_markup=admin_panel_keyboard())
+        except Exception:
+            pass
         await cq.answer(f"📢 {'روشن' if new == '1' else 'خاموش'}")
         return
 
@@ -1104,7 +1261,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         if not chs:
             await cq.message.answer("📭 خالی."); await cq.answer(); return
         rows = [[color_button(f"🗑 {ch['title']}", f"adm_delch_{ch['id']}", "danger")] for ch in chs]
-        rows.append([color_button("🔙", "adm_back", "primary")])
+        rows.append([color_button("🔙 بازگشت", "adm_back", "primary")])
         await cq.message.edit_text(
             "📋 <b>کانال‌ها:</b>\n(برای حذف روی هرکدام بزنید)",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -1162,7 +1319,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
             st = get_btn_style(k)
             emoji = {"primary": "🔵", "success": "🟢", "danger": "🔴"}.get(st, "⚪")
             rows.append([color_button(f"{emoji} {label} ({st})", f"style_edit_{k}", "primary")])
-        rows.append([color_button("🔙", "adm_back", "primary")])
+        rows.append([color_button("🔙 بازگشت", "adm_back", "primary")])
         await cq.message.edit_text(
             "🎨 <b>رنگ دکمه‌های اصلی:</b>\nروی هر دکمه بزنید تا رنگش را عوض کنید:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -1179,7 +1336,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         if not bts:
             await cq.message.answer("📭 خالی."); await cq.answer(); return
         rows = [[color_button(f"🗑 {b['text']}", f"adm_delbtn_{b['id']}", "danger")] for b in bts]
-        rows.append([color_button("🔙", "adm_back", "primary")])
+        rows.append([color_button("🔙 بازگشت", "adm_back", "primary")])
         await cq.message.edit_text(
             "📋 دکمه‌ها:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -1197,7 +1354,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
             [color_button("➕ افزودن ادمین", "adm_add_admin", "success")],
             [color_button("📃 لیست ادمین‌ها", "adm_list_admins", "primary")],
             [color_button("🗑 حذف ادمین", "adm_del_admin", "danger")],
-            [color_button("🔙", "adm_back", "primary")],
+            [color_button("🔙 بازگشت", "adm_back", "primary")],
         ]
         await cq.message.edit_text(
             "👤 <b>مدیریت ادمین‌ها:</b>",
@@ -1215,7 +1372,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         if not adm:
             await cq.message.answer("📭 ادمینی نیست."); await cq.answer(); return
         rows = [[color_button(f"🗑 {a}", f"adm_deladm_{a}", "danger")] for a in adm]
-        rows.append([color_button("🔙", "adm_back", "primary")])
+        rows.append([color_button("🔙 بازگشت", "adm_back", "primary")])
         await cq.message.edit_text(
             "🗑 کدام ادمین؟",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
@@ -1251,7 +1408,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
             [color_button("🚫 بلاک کاربر", "adm_block_user", "danger")],
             [color_button("✅ آنبلاک کاربر", "adm_unblock_user", "success")],
             [color_button("📋 لیست بلاک‌شده‌ها", "adm_blocked_list", "primary")],
-            [color_button("🔙", "adm_back", "primary")],
+            [color_button("🔙 بازگشت", "adm_back", "primary")],
         ]
         await cq.message.edit_text(
             "🚫 <b>مدیریت بلاک:</b>",
@@ -1284,7 +1441,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         rows = [
             [color_button("➕ افزودن امتیاز", "adm_add_points", "success")],
             [color_button("➖ کاهش امتیاز", "adm_remove_points", "danger")],
-            [color_button("🔙", "adm_back", "primary")],
+            [color_button("🔙 بازگشت", "adm_back", "primary")],
         ]
         await cq.message.edit_text(
             "💰 <b>مدیریت امتیاز:</b>",
@@ -1306,7 +1463,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         rows = [
             [color_button("➕ کد جدید", "adm_new_coupon", "success")],
             [color_button("📋 لیست کدها", "adm_list_coupons", "primary")],
-            [color_button("🔙", "adm_back", "primary")],
+            [color_button("🔙 بازگشت", "adm_back", "primary")],
         ]
         await cq.message.edit_text(
             "🎟 <b>کد تخفیف:</b>",
@@ -1384,7 +1541,11 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
         await cq.answer(); return
 
     if data == "adm_back":
-        await cq.message.edit_text("🎛 <b>پنل ادمین پچ پچ</b>",
+        try:
+            await cq.message.edit_text("🎛 <b>پنل ادمین پچ پچ</b>",
+                                       reply_markup=admin_panel_keyboard())
+        except Exception:
+            await cq.message.answer("🎛 <b>پنل ادمین پچ پچ</b>",
                                     reply_markup=admin_panel_keyboard())
         await cq.answer(); return
 
@@ -1402,9 +1563,7 @@ async def handle_admin_callback(cq: CallbackQuery, state: FSMContext):
 #                    Callback استایل
 # ============================================================
 
-async def handle_style_callback(cq: CallbackQuery, state: FSMContext):
-    data = cq.data
-
+async def handle_style_callback(cq: CallbackQuery, state: FSMContext, data: str):
     if data.startswith("style_edit_"):
         key = data.replace("style_edit_", "")
         rows = [
@@ -1450,6 +1609,20 @@ async def handle_style_callback(cq: CallbackQuery, state: FSMContext):
 # ============================================================
 #                    FSM Handlers
 # ============================================================
+
+@dp.message(ProfileStates.waiting_name)
+async def st_edit_name(message: Message, state: FSMContext):
+    await state.clear()
+    name = (message.text or "").strip()
+    if len(name) < 2 or len(name) > 32:
+        await message.answer("❌ نام باید بین ۲ تا ۳۲ کاراکتر باشد.")
+        return
+    conn.execute("UPDATE users SET display_name = ? WHERE telegram_user_id = ?",
+                 (name, str(message.from_user.id)))
+    conn.commit()
+    await message.answer(f"✅ نام شما به <b>{name}</b> تغییر کرد.",
+                         reply_markup=main_reply_keyboard())
+
 
 @dp.message(AdminStates.broadcast)
 async def st_broadcast(message: Message, state: FSMContext):
@@ -1673,6 +1846,7 @@ async def st_find_user(message: Message, state: FSMContext):
         f"👤 <b>اطلاعات کاربر</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"🆔 عددی: <code>{u['telegram_user_id']}</code>\n"
+        f"📛 نام نمایشی: <b>{u.get('display_name') or '—'}</b>\n"
         f"🔑 کلید: <code>{u['rkey']}</code>\n"
         f"🎁 امتیاز: <b>{u['points']}</b>\n"
         f"💬 پیام‌ها: <b>{u['message_count']}</b>\n"
