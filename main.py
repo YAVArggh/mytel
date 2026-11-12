@@ -72,7 +72,7 @@ ADMIN_IDS = {
     int(x) for x in os.environ.get("ADMIN_IDS", "8094551428").replace(",", " ").split() if x.strip().isdigit()
 }
 REQUIRED_CHANNELS = [
-    c.strip() for c in os.environ.get("REQUIRED_CHANNELS", "@Dosti,@MeloGapM").split(",") if c.strip()
+    c.strip() for c in os.environ.get("REQUIRED_CHANNELS", "").split(",") if c.strip()
 ]
 # STUB payment gateway — do NOT put the original bot's real gateway link here.
 PAYMENT_GATEWAY_URL = os.environ.get("PAYMENT_GATEWAY_URL", "https://example.com/payment-gateway-placeholder")
